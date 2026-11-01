@@ -22,9 +22,13 @@ namespace LBMStudio
         StatusStrip status;
         ToolStripStatusLabel statusText;
 
-        public MainForm()
+        public MainForm() : this(AppSettings.Load())
         {
-            settings = AppSettings.Load();
+        }
+
+        public MainForm(AppSettings settings)
+        {
+            this.settings = settings;
             Text = "LBM Studio – lattice Boltzmann simulace proudění";
             Width = 1500;
             Height = 950;

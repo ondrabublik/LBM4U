@@ -34,14 +34,14 @@ namespace LBMStudio
             var log = new StreamWriter(Path.Combine(outDir, "selftest.log")) { AutoFlush = true };
             try
             {
+                // the test settings are not saved, settings.ini of the user stays untouched
                 var settings = AppSettings.Load();
                 settings.Workspace = Path.Combine(outDir, "workspace");
                 if (solver != null)
                 {
                     settings.SolverExe = solver;
                 }
-                settings.Save();
-                var form = new MainForm { StartPosition = FormStartPosition.Manual, Location = new Point(0, 0), Width = 1500, Height = 950 };
+                var form = new MainForm(settings) { StartPosition = FormStartPosition.Manual, Location = new Point(0, 0), Width = 1500, Height = 950 };
                 form.Show();
                 Application.DoEvents();
                 string geomName = "selftest";
