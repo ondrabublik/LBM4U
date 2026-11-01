@@ -60,7 +60,15 @@ void BlockBasic::collision() {
 			fneq[p] = fp[p] - feq[p] + 0.5 * source[p];
 		}
 		// f* = f - Omega (f - feq) + (I - Omega/2) S
-		coll.relax(fneq, tau, delta);
+		double tauLoc = tau;
+		if (smagorinsky > 0) {
+			double fn[27];
+			for (int p = 0; p < nf; p++) {
+				fn[p] = fp[p] - feq[p];
+			}
+			tauLoc = lesTau(tau, fn, rho);
+		}
+		coll.relax(fneq, tauLoc, delta);
 		pop_t* fcp = &fc[nf * ind];
 		for (int p = 0; p < nf; p++) {
 			fcp[p] = (pop_t)(fp[p] - delta[p] + source[p]);

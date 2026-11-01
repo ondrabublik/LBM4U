@@ -9,7 +9,10 @@ build.bat            # Visual Studio 2022 (MSVC, OpenMP /openmp:llvm)
 build.bat mingw      # MSYS2 g++ + Ninja, staticky linkovaný exe
 ```
 
-CMake vytvoří `cLBMnet.exe` (řešič) a `lbm_tests.exe` (unit testy, spouštět ve složce buildu).
+CMake vytvoří `cLBMnet.exe` (řešič) a `lbm_tests.exe` (26 unit testů, spouštět ve složce buildu, volitelně s filtrem názvu).
+
+Grafické rozhraní: `gui/build_gui.bat` → `gui/bin/LBMStudio.exe`, popis v [gui/README.md](gui/README.md).
+
 Volba `-DLBM_FP32=ON` uloží distribuční funkce v jednoduché přesnosti (poloviční paměť a datový tok).
 
 Spuštění řešiče:
@@ -59,6 +62,9 @@ Návratový kód 3 znamená divergenci (NaN).
 * Křivost výškovou funkcí (`curvatureModel = 1`); výchozí zůstává divergence vyhlazených normál, která v dynamice dává menší parazitní proudy.
 * Okrajové podmínky: vtok (`uInlet, vInlet, wInlet`, typ buňky 2), výtok s tlakem (`pOutlet`, typ 3, anti-bounce-back), pohyblivá stěna (`uwall, vwall, wwall`, typ 4, víko domény `movingLidTop`).
 * Volitelné meze `tauMin`, `tauMax` pro proměnnou relaxaci.
+* Smagorinského LES model (`smagorinsky` = C, typicky 0,1–0,17) pro jednofázový i free-surface výpočet, explicitní vztah Hou et al. (1996).
+* `tauMinusMax`: horní mez relaxačního času lichých momentů (TRT τ⁻, MRT s_q). Při τ → 0,5 (voda) dává magický vztah τ⁻ ≈ 10³ a výpočet diverguje; s `tauMinusMax = 1` a LES je plnění vodou stabilní. GUI tuto hodnotu zapisuje vždy.
+* Řešič upozorní, když rychlost mřížky překročí 0,3 (vysoké Machovo číslo).
 
 ## Výkon
 

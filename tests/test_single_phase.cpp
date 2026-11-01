@@ -158,3 +158,17 @@ TEST(thread_count_does_not_change_result) {
 	}
 	omp_set_num_threads(4);
 }
+
+TEST(smagorinsky_increases_viscosity) {
+	double uLam, uLes;
+	for (int les = 0; les < 2; les++) {
+		CaseSpec s = poiseuilleCase("les", COLLISION_TRT, 1, 1e-4);
+		s.params["vKin"] = "0.01";
+		s.params["smagorinsky"] = les ? "0.5" : "0";
+		auto mesh = buildMesh(s);
+		runSteps(*mesh, 4000);
+		(les ? uLes : uLam) = velocityAt(*mesh, 1, 1, 10)[0];
+	}
+	CHECK_LT(uLes, 0.95 * uLam);
+	CHECK_LT(0.0, uLes);
+}

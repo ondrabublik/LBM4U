@@ -252,3 +252,21 @@ TEST(free_surface_d2q9) {
 	CHECK_LT(fabs(m - m0) / m0, POP_TOL);
 	CHECK(maxVelocity(*mesh) > 1e-3);
 }
+
+// water-like viscosity (tau -> 0.5): stable with LES and limited relaxation of the odd moments
+TEST(low_viscosity_free_surface_is_stable) {
+	for (int cm : { COLLISION_MRT, COLLISION_TRT }) {
+		CaseSpec s = damBreak("fs_low_visc", cm);
+		s.params["vKin"] = "1e-4";
+		s.params["gz"] = "-5e-4";
+		s.params["smagorinsky"] = "0.15";
+		s.params["tauMinusMax"] = "1";
+		auto mesh = buildMesh(s);
+		double m0 = totalMass(*mesh, 0);
+		runSteps(*mesh, 1500);
+		double u = maxVelocity(*mesh);
+		CHECK(!std::isnan(u));
+		CHECK_LT(u, 0.3); // lattice units, Ch = Ct = 1
+		CHECK_LT(fabs(totalMass(*mesh, 1500) - m0) / m0, POP_TOL);
+	}
+}

@@ -131,13 +131,22 @@ void BlockFreeSurface::cellForce(int ind, double* acc, double& epsF) {
 }
 
 double BlockFreeSurface::localTau(int ind) {
+	double tauLoc = tau;
 	if (viscosityModel > 0) {
 		shearRate[ind] = computeShearRate(ind) / Ct;
 		viscosity[ind] = nonNewtonianViscosityModel(shearRate[ind]);
-		double tauLoc = 0.5 + 3 * viscosity[ind] / Cvis;
-		return min(max(tauLoc, tauMin), tauMax);
+		tauLoc = 0.5 + 3 * viscosity[ind] / Cvis;
+		tauLoc = min(max(tauLoc, tauMin), tauMax);
 	}
-	return tau;
+	if (smagorinsky > 0) {
+		double feq[27], fneq[27];
+		equilibrium(feq, Rho[ind], dRho[ind], U[ind], V[ind], W[ind]);
+		for (int p = 0; p < nf; p++) {
+			fneq[p] = f[nf * ind + p] - feq[p];
+		}
+		tauLoc = lesTau(tauLoc, fneq, Rho[ind]);
+	}
+	return tauLoc;
 }
 
 void BlockFreeSurface::collideCell(int ind, const double* acc, double epsF, double tauLoc) {

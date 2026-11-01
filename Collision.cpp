@@ -7,6 +7,7 @@
 #include "Collision.h"
 #include <cmath>
 #include <stdexcept>
+#include <algorithm>
 
 using namespace std;
 
@@ -57,11 +58,13 @@ CollisionOperator::CollisionOperator() {
 	nf = 0;
 	opp = nullptr;
 	magic = 3.0 / 16.0;
+	tauMinusMax = 1e30;
 	mrtMagicSq = true;
 	cachedTau = -1;
 }
 
-void CollisionOperator::init(int model, int nf, const int* ex, const int* ey, const int* ez, const int* opp, double magic, bool mrtMagicSq, double tau0) {
+void CollisionOperator::init(int model, int nf, const int* ex, const int* ey, const int* ez, const int* opp, double magic, bool mrtMagicSq, double tau0, double tauMinusMax) {
+	this->tauMinusMax = tauMinusMax;
 	this->model = model;
 	this->nf = nf;
 	this->opp = opp;
@@ -168,7 +171,7 @@ void CollisionOperator::diagonal(double tau, double* S) const {
 		S[m] = sNu;
 	}
 	if (mrtMagicSq) {
-		double sq = 8.0 * (2.0 - sNu) / (8.0 - sNu);
+		double sq = max(8.0 * (2.0 - sNu) / (8.0 - sNu), 1.0 / tauMinusMax);
 		for (int m : fluxMoments) {
 			S[m] = sq;
 		}
@@ -191,7 +194,7 @@ void CollisionOperator::buildT(double tau, vector<double>& T) const {
 }
 
 double CollisionOperator::tauMinus(double tau) const {
-	return 0.5 + magic / (tau - 0.5);
+	return min(0.5 + magic / (tau - 0.5), tauMinusMax);
 }
 
 void CollisionOperator::relax(const double* fneq, double tau, double* delta) const {

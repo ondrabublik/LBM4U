@@ -224,3 +224,25 @@ TEST(missing_block_file_is_reported) {
 	ParamMap p = parseParams("ni=4\nnj=4\nnk=4\nproblemID=0\nmodel=319\nuMax=0.1\nH=4\ndensity=1\nvKin=0.1");
 	CHECK_THROWS(Mesh("tests_tmp/nomesh/", "tests_tmp/nomesh/sim/", p));
 }
+
+TEST(tau_minus_limit) {
+	Lattice L = lattice(319);
+	CollisionOperator c;
+	c.init(COLLISION_TRT, L.nf, L.ex, L.ey, L.ez, L.opp, 3.0 / 16, true, 0.5001, 1.0);
+	CHECK_NEAR(c.tauMinus(0.5001), 1.0, 1e-15);
+	CHECK_NEAR(c.tauMinus(1.0), 0.5 + 0.1875 / 0.5, 1e-15); // below the limit
+	CollisionOperator m;
+	m.init(COLLISION_MRT, L.nf, L.ex, L.ey, L.ez, L.opp, 3.0 / 16, true, 0.5001, 1.0);
+	// odd moments relax at least with 1/tauMinusMax
+	double fneq[27], delta[27];
+	for (int p = 0; p < L.nf; p++) {
+		fneq[p] = m.M[L.nf * 4 + p] * L.w[p];
+	}
+	m.relax(fneq, 0.5001, delta);
+	double q = 0, dq = 0;
+	for (int p = 0; p < L.nf; p++) {
+		q += m.M[L.nf * 4 + p] * fneq[p];
+		dq += m.M[L.nf * 4 + p] * delta[p];
+	}
+	CHECK_NEAR(dq / q, 1.0, 1e-12);
+}

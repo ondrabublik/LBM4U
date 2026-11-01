@@ -22,13 +22,14 @@ public:
 	int nf;
 	const int* opp;
 	double magic;       // TRT magic parameter Lambda (3/16 places bounce-back walls exactly halfway)
+	double tauMinusMax; // upper limit of the relaxation time of the odd moments (stability for tau -> 0.5)
 	bool mrtMagicSq;    // MRT: relate the rates of the odd moments to s_nu (TRT magic 3/16) so the wall position does not depend on tau
 	std::vector<double> M, iM, S0; // MRT transformation, its inverse and the default diagonal
 	std::vector<int> stressMoments; // MRT moments relaxed with s_nu
 	std::vector<int> fluxMoments;   // odd MRT moments relaxed with s_q
 
 	CollisionOperator();
-	void init(int model, int nf, const int* ex, const int* ey, const int* ez, const int* opp, double magic, bool mrtMagicSq, double tau0);
+	void init(int model, int nf, const int* ex, const int* ey, const int* ez, const int* opp, double magic, bool mrtMagicSq, double tau0, double tauMinusMax = 1e30);
 	// delta[p] = (Omega * fneq)[p] for relaxation time tau
 	void relax(const double* fneq, double tau, double* delta) const;
 	double tauMinus(double tau) const;

@@ -107,6 +107,7 @@ static int run(int argc, char** argv) {
 	int iterLast = 0;
 	int exitCode = 0;
 	int iter = 0;
+	bool velocityWarning = false;
 	for (iter = 0; iter < maxIter; iter++) {
 		mesh->timeStep(iter);
 		if (iter % saveRate == 0) {
@@ -145,6 +146,11 @@ static int run(int argc, char** argv) {
 			mesh->writeResultsToVTK(iter);
 			tLast = omp_get_wtime();
 			iterLast = iter;
+			double uLattice = uMax / mesh->blocks[mesh->blockId[0]]->Cu;
+			if (uLattice > 0.3 && !velocityWarning) {
+				cout << "warning: lattice velocity " << uLattice << " is high (Mach number), increase the characteristic velocity uMax or refine the mesh" << endl;
+				velocityWarning = true;
+			}
 			if (std::isnan(uMax)) {
 				cout << "Error: the solution diverged (NaN velocity)" << endl;
 				exitCode = 3;

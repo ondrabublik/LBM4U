@@ -129,7 +129,8 @@ void Block::initCommon(bool isFirst, Block** blocks, int nBlock, int nBlockMax, 
 	mrtModel = this->collisionModel == COLLISION_MRT;
 	tauMin = getParDouble("tauMin", par, false, 0.5001);
 	tauMax = getParDouble("tauMax", par, false, 1.5);
-	coll.init(this->collisionModel, nf, ex, ey, ez, opp, getParDouble("trtMagic", par, false, 3.0 / 16.0), getParInt("mrtMagicSq", par, false, 1) != 0, tau);
+	smagorinsky = getParDouble("smagorinsky", par, false, 0);
+	coll.init(this->collisionModel, nf, ex, ey, ez, opp, getParDouble("trtMagic", par, false, 3.0 / 16.0), getParInt("mrtMagicSq", par, false, 1) != 0, tau, getParDouble("tauMinusMax", par, false, 1e30));
 
 	for (int dir = 0; dir < nf; dir++) {
 		offs[dir] = (ni * nj) * ez[dir] + ni * ey[dir] + ex[dir];
@@ -152,8 +153,11 @@ void Block::initCommon(bool isFirst, Block** blocks, int nBlock, int nBlockMax, 
 		const char* names[] = { "BGK", "MRT", "TRT" };
 		cout << "collision model = " << names[this->collisionModel] << endl;
 		cout << "tau = " << tau << endl;
-		if (tau < 0.51) {
-			cout << "warning: tau is close to 0.5, the simulation may be unstable" << endl;
+		if (smagorinsky > 0) {
+			cout << "Smagorinsky LES, C = " << smagorinsky << endl;
+		}
+		if (tau < 0.51 && smagorinsky == 0) {
+			cout << "warning: tau is close to 0.5, the simulation may be unstable (consider smagorinsky = 0.1)" << endl;
 		}
 	}
 }
@@ -316,6 +320,21 @@ void Block::initBoundary(int id, string geomPath) {
 		cellType[ind] = (unsigned char)type;
 		boundary[ind] = type != CT_FLUID;
 	}
+}
+
+double Block::lesTau(double tau0, const double* fneq, double rho) const {
+	double pxx = 0, pyy = 0, pzz = 0, pxy = 0, pxz = 0, pyz = 0;
+	for (int p = 0; p < nf; p++) {
+		pxx += ex[p] * ex[p] * fneq[p];
+		pyy += ey[p] * ey[p] * fneq[p];
+		pzz += ez[p] * ez[p] * fneq[p];
+		pxy += ex[p] * ey[p] * fneq[p];
+		pxz += ex[p] * ez[p] * fneq[p];
+		pyz += ey[p] * ez[p] * fneq[p];
+	}
+	double Q = sqrt(pxx * pxx + pyy * pyy + pzz * pzz + 2 * (pxy * pxy + pxz * pxz + pyz * pyz));
+	double c2 = smagorinsky * smagorinsky;
+	return 0.5 * (tau0 + sqrt(tau0 * tau0 + 18.0 * sqrt(2.0) * c2 * Q / rho));
 }
 
 void Block::equilibrium(double* feq, double Rho, double dRho, double U, double V, double W) {

@@ -40,7 +40,8 @@ public:
 	int collisionModel = COLLISION_BGK;
 	bool mrtModel = false;
 	CollisionOperator coll;
-	double tauMin = 0.5001, tauMax = 1.5; // limits for variable relaxation time
+	double tauMin = 0.5001, tauMax = 1.5; // limits for variable relaxation time (non-Newtonian fluids)
+	double smagorinsky = 0;              // Smagorinsky constant of the LES model (0 - laminar)
 	Block** blocks = nullptr;
 	int nBlock = 0;
 	int nBlockMax = 0;
@@ -119,6 +120,8 @@ public:
 	static double getParDouble(const string& quantity, const ParamMap& par, bool mandatory, double defaultValue);
 	static double* getParDoubleArray(const string& quantity, const ParamMap& par);
 	static bool hasPar(const string& quantity, const ParamMap& par);
+	// relaxation time of the Smagorinsky model for the non-equilibrium part fneq (Hou et al. 1996)
+	double lesTau(double tau0, const double* fneq, double rho) const;
 	void equilibrium(double* feq, double Rho, double dRho, double U, double V, double W);
 	void equilibrium(double* feq, double Rho, double dRho, double U, double V, double W, double eps);
 };
