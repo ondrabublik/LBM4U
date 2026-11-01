@@ -22,6 +22,13 @@ namespace LBMStudio
         TextBox geomLog;
         Viewer3D geomView;
         bool loadingGeometry;
+        CheckBox chkShowModel, chkShowCells, chkShowBlocks, chkMeshCutFlip;
+        ComboBox cbMeshCut;
+        TrackBar tbMeshCut;
+        Label lblMeshCut;
+        byte[] meshTypes;               // cell types of the displayed mesh, loaded on demand
+        System.Windows.Media.Media3D.Model3D cellsModel, blocksModel; // cached, rebuilt when the mesh or the cut changes
+        bool updatingMeshCut;
 
         static readonly string[] FaceNames = { "x min", "x max", "y min", "y max", "z min", "z max" };
         static readonly string[] UnitNames = { "mm", "m", "cm", "palce" };
@@ -133,10 +140,45 @@ namespace LBMStudio
 
             geomView = new Viewer3D { Dock = DockStyle.Fill };
             geomLog = new TextBox { Dock = DockStyle.Bottom, Height = 120, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 8.5f) };
-            var hint = new Label { Dock = DockStyle.Top, Height = 20, ForeColor = Color.DimGray, Text = "  Levé tlačítko – otáčení, pravé – posun, kolečko – zoom. Červená = vtok, zelená = výtok, modrá šipka = gravitace." };
+            var hint = new Label { Dock = DockStyle.Top, Height = 20, ForeColor = Color.DimGray, Text = "  Levé tlačítko – otáčení, pravé – posun, kolečko – zoom. Červená = vtok, zelená = výtok, modrá šipka = gravitace, modré buňky = tekutina." };
+
+            // display of the solver mesh
+            var meshBar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4, 2, 4, 0), WrapContents = true };
+            chkShowModel = new CheckBox { Text = "CAD model", AutoSize = true, Checked = true, Margin = new Padding(3, 6, 8, 0) };
+            chkShowCells = new CheckBox { Text = "Buňky sítě", AutoSize = true, Margin = new Padding(3, 6, 8, 0), Enabled = false };
+            chkShowBlocks = new CheckBox { Text = "Bloky", AutoSize = true, Margin = new Padding(3, 6, 8, 0), Enabled = false };
+            cbMeshCut = Combo("bez řezu", "řez kolmý na x", "řez kolmý na y", "řez kolmý na z");
+            cbMeshCut.Width = 120;
+            cbMeshCut.Enabled = false;
+            tbMeshCut = new TrackBar { Width = 200, Minimum = 0, Maximum = 0, TickStyle = TickStyle.None, Height = 30, Enabled = false };
+            lblMeshCut = new Label { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(3, 6, 3, 0) };
+            chkMeshCutFlip = new CheckBox { Text = "obrátit", AutoSize = true, Margin = new Padding(3, 6, 8, 0), Enabled = false };
+            chkMeshCutFlip.CheckedChanged += (s, e) => { cellsModel = null; UpdateMeshLayers(); };
+            chkShowModel.CheckedChanged += (s, e) => UpdateGeometryPreview();
+            chkShowCells.CheckedChanged += (s, e) =>
+            {
+                if (chkShowCells.Checked)
+                {
+                    chkShowModel.Checked = false; // the model surface would cover the cells
+                }
+                UpdateMeshLayers();
+            };
+            chkShowBlocks.CheckedChanged += (s, e) => UpdateMeshLayers();
+            cbMeshCut.SelectedIndexChanged += (s, e) => { ResetMeshCut(); cellsModel = null; UpdateMeshLayers(); };
+            tbMeshCut.ValueChanged += (s, e) =>
+            {
+                if (!updatingMeshCut)
+                {
+                    cellsModel = null;
+                    UpdateMeshLayers();
+                }
+            };
+            meshBar.Controls.AddRange(new Control[] { new Label { Text = "Zobrazit:", AutoSize = true, Margin = new Padding(3, 6, 3, 0) }, chkShowModel, chkShowCells, chkShowBlocks, cbMeshCut, tbMeshCut, chkMeshCutFlip, lblMeshCut });
+
             var right = new Panel { Dock = DockStyle.Fill, Size = new Size(900, 800) };
             right.Controls.Add(geomView);
             right.Controls.Add(hint);
+            right.Controls.Add(meshBar);
             right.Controls.Add(geomLog);
             page.Controls.Add(right);
             page.Controls.Add(column);
@@ -176,6 +218,7 @@ namespace LBMStudio
             tbGz.Text = Fmt.D(geom.Gravity.Z);
             loadingGeometry = false;
             geomLog.Clear();
+            ResetMeshDisplay();
             ApplyUnits();
             if (mesh != null)
             {
@@ -317,6 +360,7 @@ namespace LBMStudio
                 return;
             }
             geomView.Clear();
+            UpdateMeshLayers();
             if (mesh == null)
             {
                 lblMeshEstimate.Text = "";
@@ -325,7 +369,10 @@ namespace LBMStudio
             Vec3 min, max;
             DomainBox(out min, out max);
             double size = (max - min).Length;
-            geomView.SetLayer("body", Viewer3D.Triangles(mesh.V, System.Windows.Media.Color.FromRgb(170, 175, 185), rbOutside.Checked ? 1.0 : 0.45), !rbOutside.Checked);
+            if (chkShowModel.Checked)
+            {
+                geomView.SetLayer("body", Viewer3D.Triangles(mesh.V, System.Windows.Media.Color.FromRgb(170, 175, 185), rbOutside.Checked ? 1.0 : 0.45), !rbOutside.Checked);
+            }
             geomView.SetLayer("box", Viewer3D.BoxEdges(min, max, size * 0.0015, Colors.DimGray));
             double dx;
             if (Fmt.TryParse(tbDx.Text, out dx) && dx > 0)
@@ -398,6 +445,8 @@ namespace LBMStudio
                 }
                 LogGeom("Síť je hotová. Pokračujte na záložce Simulace.");
                 SetStatus("Síť: " + g.BlockCount + " bloků, " + g.FluidCells + " buněk tekutiny");
+                ResetMeshDisplay();
+                UpdateMeshLayers();
                 RefreshSimulationList(null);
             }));
         }
@@ -408,6 +457,93 @@ namespace LBMStudio
             ReadGeometryFromUi();
             mesh.WriteBinary(geom.StlPath(settings.Workspace));
             CaseGenerator.Generate(geom, mesh, settings.Workspace, LogGeom);
+            ResetMeshDisplay();
+            UpdateMeshLayers();
+        }
+
+        // ---------------------------------------------------------------- mesh display
+
+        /// <summary>Drops the cached mesh display, called when the geometry or its mesh changes.</summary>
+        void ResetMeshDisplay()
+        {
+            meshTypes = null;
+            cellsModel = null;
+            blocksModel = null;
+            bool ready = geom != null && geom.MeshReady;
+            chkShowCells.Enabled = ready;
+            chkShowBlocks.Enabled = ready;
+            cbMeshCut.Enabled = ready;
+            ResetMeshCut();
+        }
+
+        void ResetMeshCut()
+        {
+            int axis = cbMeshCut.SelectedIndex - 1;
+            bool on = axis >= 0 && geom != null && geom.MeshReady;
+            tbMeshCut.Enabled = on;
+            chkMeshCutFlip.Enabled = on;
+            lblMeshCut.Text = "";
+            if (!on)
+            {
+                return;
+            }
+            int n = axis == 0 ? geom.Nx : (axis == 1 ? geom.Ny : geom.Nz);
+            updatingMeshCut = true;
+            tbMeshCut.Maximum = Math.Max(0, n - 1);
+            tbMeshCut.Value = n / 2;
+            updatingMeshCut = false;
+        }
+
+        /// <summary>Shows or hides the cells and blocks of the mesh in the 3D view, builds them when needed.</summary>
+        void UpdateMeshLayers()
+        {
+            if (geomView == null)
+            {
+                return;
+            }
+            bool ready = geom != null && geom.MeshReady;
+            if (ready && (chkShowCells.Checked || chkShowBlocks.Checked) && meshTypes == null)
+            {
+                meshTypes = geom.LoadCellTypes(settings.Workspace);
+                if (meshTypes != null && meshTypes.LongLength != (long)geom.GX * geom.GY * geom.GZ)
+                {
+                    LogGeom("Soubor mesh/celltypes.bin neodpovídá síti, vytvořte síť znovu.");
+                    meshTypes = null;
+                }
+            }
+            ready = ready && meshTypes != null;
+            int axis = cbMeshCut.SelectedIndex - 1;
+            // by default the half towards the initial camera position (+x, -y, +z) is removed
+            bool keepUpper = (axis == 1) != chkMeshCutFlip.Checked;
+            if (ready && axis >= 0)
+            {
+                string[] names = { "x", "y", "z" };
+                int plane = keepUpper ? tbMeshCut.Value : tbMeshCut.Value + 1;
+                lblMeshCut.Text = names[axis] + (keepUpper ? " ≥ " : " ≤ ") + Fmt.G(geom.Origin[axis] + plane * geom.Dx, 4) + " m";
+            }
+            if (ready && chkShowCells.Checked && cellsModel == null)
+            {
+                long faces;
+                Cursor = Cursors.WaitCursor;
+                try
+                {
+                    cellsModel = MeshDisplay.Cells(geom, meshTypes, axis, tbMeshCut.Value, keepUpper, out faces);
+                }
+                finally
+                {
+                    Cursor = Cursors.Default;
+                }
+                if (cellsModel == null)
+                {
+                    LogGeom(string.Format("Povrch sítě má {0:N0} stěn buněk, zobrazit lze nejvýše {1:N0}. Použijte řez nebo hrubší síť.", faces, MeshDisplay.MaxFaces));
+                }
+            }
+            if (ready && chkShowBlocks.Checked && blocksModel == null)
+            {
+                blocksModel = MeshDisplay.BlockEdges(geom, meshTypes, Colors.DarkSlateGray);
+            }
+            geomView.SetLayer("cells", ready && chkShowCells.Checked ? cellsModel : null);
+            geomView.SetLayer("blocks", ready && chkShowBlocks.Checked ? blocksModel : null);
         }
     }
 }
