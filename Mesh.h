@@ -1,15 +1,12 @@
 /*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
-
-/* 
  * File:   Mesh.h
  * Author: obublik
  *
  * Created on 6. února 2018, 13:53
  */
+
+#ifndef MESH_H
+#define MESH_H
 
 #include <iostream>
 #include <fstream>
@@ -18,13 +15,8 @@
 #include <algorithm>
 #include <iterator>
 #include <vector>
-#include "math.h"
-#include <windows.h>
-#include <string>
+#include <cmath>
 #include <unordered_map>
-
-#ifndef MESH_H
-#define MESH_H
 #include "Block.h"
 #include "BlockBasic.h"
 #include "BlockFreeSurface.h"
@@ -39,61 +31,78 @@ using namespace std;
 
 class Mesh {
 public:
-    string geomPath;
-    string simulPath;
-    int problemID;
+	string geomPath;
+	string simulPath;
+	int problemID;
 	int viscosityModel;
+	int collisionModel;
 	bool initHydroPress;
-    int nBlock, nBlockMax;
-    int **blockIndex;
-    int * blockMap;
-    Block **blocks;
-    int* coarseLevels;
-    int maxCoarseLevel;
-    int ni, nj, nk, nf;
-    int nBi, nBj, nBk;
-    int *ex, *ey, *ez, *opp;
-    double *w;
-    double *G;
-    int *indIn; // inlet indexes
-    int *indBound; // boundary indexes
-    int *indAll;
-    double massTot;
-    int nParticles;
-    int maxParticlesInCell;
-    int activeCellsNumTot;
-    int nSmoothStep;
+	int nBlock, nBlockMax;
+	int** blockIndex;
+	int* blockId;     // global index of the i-th block
+	int* blockMap;
+	Block** blocks;
+	int ni, nj, nk, nf;
+	int nIn, nBound;
+	int nBi, nBj, nBk;
+	int* ex, * ey, * ez, * opp;
+	double* w;
+	int* indIn; // interior indexes
+	int* indBound; // boundary indexes
+	int* indAll;
+	double massTot;
+	int nParticles;
+	int maxParticlesInCell;
+	long long activeCellsNumTot;
+	int nSmoothStep;
 	int nIntIterParticle;
+	double gravityRotationOmega;
+	bool vtkBinary;
+	bool writeFields;
+	vector<pair<double, string> > vtkFiles, vtkFsFiles;
 
-    // particles
-    LagrangeParticles *particles;
+	// particles
+	LagrangeParticles* particles;
 
 	// fiberss
 	LagrangeFibers* fibers;
 
-    Mesh(string geomPath, string simulPath, unordered_map<string, string> par);
-    ~Mesh();
+	Mesh(string geomPath, string simulPath, const ParamMap& par);
+	~Mesh();
 
-    void model(int model, int** ex, int** ey, int** ez, double** w, int** opp);
-    int loadStructure(string geomPath);
-    void initIndexes();
-    void initBlocks();
-    void setWall(Block *b, int direction);
-    void evalBlocks(int iter, int step);
-    void changeData(int level);
-    void exchange(Block *b, Block *bs, int indexTab);
-    void exchangeVOF(Block *b, Block *bs, int indexTab);
-    double getUmax();
+	bool isFreeSurface() const;
+	void model(int model, int** ex, int** ey, int** ez, double** w, int** opp);
+	int loadStructure(string geomPath);
+	void initIndexes();
+	void initBlocks();
+	void evalBlocks(int iter, int step);
+	void timeStep(int iter);
+	// block and local index of a cell given by global indexes, nullptr if the block does not exist
+	Block* cellAt(int gi, int gj, int gk, int& ind);
+	double getUmax();
 	double getCt();
-    void writeResults();
-    void writeResultsToVTK(int iter);
+	void writeResultsToVTK(int iter);
 	void writeResultsToOutFile();
-    void writeBoundaryToVTK();
-    void writeFreeSurfaceToVTK(int iter);
-    double average(int*ei, int*ej, int*ek, int indBlock, int indLocal, double vofCenter);
+	void writeBoundaryToVTK();
+	void writeFreeSurfaceToVTK(int iter);
+	void writeFieldsBinary(int iter);
 	void generateDistanceFunction();
 	void initHydrostaticPress();
+
+	// runs fn(block) for every (non empty) block in parallel
+	template <class F> void forBlocks(F fn, bool onlyActive = true) {
+#pragma omp parallel for schedule(dynamic)
+		for (int i = 0; i < nBlock; i++) {
+			Block* b = blocks[blockId[i]];
+			if (!onlyActive || !b->isBlockEmpty) {
+				fn(b);
+			}
+		}
+	}
+
+private:
+	string outputName(const string& prefix, int iter, const string& ext);
+	void writePvd(const string& fileName, const vector<pair<double, string> >& files);
 };
 
 #endif /* MESH_H */
-

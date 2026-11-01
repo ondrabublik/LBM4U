@@ -529,8 +529,9 @@ void LagrangeParticlesVar3::readInitParticlesDistribution(string simulPath, doub
 		myfile->close();
 		delete myfile;
 	}
-	catch (int ex) {
-		cout << "Error in " << fileName << endl;
+	catch (const std::exception& ex) {
+		cout << "Error in " << fileName << ": " << ex.what() << endl;
+		exit(EXIT_FAILURE);
 	}
 	cout << nParticles << " Lagrangian particles were readed!" << endl;
 	for (int i = 0; i < nParticles; i++) {

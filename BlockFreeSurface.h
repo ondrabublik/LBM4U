@@ -1,15 +1,14 @@
 /*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
-
-/* 
  * File:   BlockFreeSurface.h
  * Author: obublik
  *
  * Created on 9. února 2018, 9:22
+ *
+ * Free surface LBM block (Koerner et al. 2005, Thuerey 2007).
  */
+
+#ifndef BLOCKFREESURFACE_H
+#define BLOCKFREESURFACE_H
 
 #include <iostream>
 #include <algorithm>
@@ -19,68 +18,97 @@
 #include <iterator>
 #include <vector>
 #include <unordered_map>
-#include "math.h"
+#include <cmath>
 #include "Block.h"
 
-#ifndef BLOCKFREESURFACE_H
-#define BLOCKFREESURFACE_H
+// interface cell types for the mass exchange (Thuerey 2007)
+enum InterfaceType {
+	FS_STANDARD = 0,
+	FS_NO_FLUID = 1,  // no fluid neighbours
+	FS_NO_EMPTY = 2,  // no gas neighbours
+	FS_ARTEFACT_FILLED = 3 // marked in findArtefactsFilled, becomes fluid
+};
 
 class BlockFreeSurface : public Block {
 public:
-    
-    double surfTension, wetAngleEq, wetAngleAdv, wetAngleRec;
-    double massErr;
-    double massBlock;
-    double *mass, *vof, *vofS1, *vofS, *normal, *curvature;
-    int nFilled, nEmptied, nAirToFs, nFluidToFs, nArtefacts1, nArtefacts2;
-    int *flagMap;  // 1 - fluid, 2 - gas, 3 - interface
-    int *surfaceLevels;
-    int *filled, *emptied, *airToFs, *fluidToFs, *artefact1, *artefact2;
-    int numFsCells;
-    double *T, *M, *iM, *S, *T0, *T1;
-    
-    // nonewtonian fluid
+
+	double surfTension, wetAngleEq, wetAngleAdv, wetAngleRec;
+	double massErr;       // mass that could not be redistributed yet
+	double massBlock;
+	double* mass, * vof, * vofS1, * vofS, * normal, * curvature;
+	int nFilled, nEmptied, nAirToFs, nFluidToFs, nArtefacts1, nArtefacts2;
+	int* flagMap;  // 1 - fluid, 2 - gas, 3 - interface, 4 - not set
+	int* surfaceLevels;
+	int* filled, * emptied, * airToFs, * fluidToFs, * artefact1, * artefact2;
+	unsigned char* fsType;
+	int numFsCells;
+	int curvatureModel;   // 0 - divergence of smoothed normals (robust), 1 - height function (accurate for smooth VOF, noisier in dynamics)
+	double fsTolerance;   // overfilling/underfilling tolerance for the cell conversion
+	int nAirToFsWarnings;
+	std::vector<double> newCellState; // averaged rho, u, v, w for the gas cells becoming interface
+
+	// nonewtonian fluid
 	int viscosityModel;
-    double *viscosity, *shearRate;
-    double *fluidModelParam;
+	double* viscosity, * shearRate;
+	double* fluidModelParam;
+	double* tauCell; // relaxation time used in the last collision
 
-    BlockFreeSurface(bool isFirst, Block **blocks, int nBlock, int nBlockMax, int *blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int *indAll, int *indIn, int *indBound, bool isMRTModel, int viscosityModel, int nf, int *ex, int *ey, int *ez, double *w, int* opp, int ni, int nj, int nk, unordered_map<string, string> par);
-    
-    ~BlockFreeSurface();
+	BlockFreeSurface();
+	BlockFreeSurface(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par);
 
-    void initZeroCondition();
-    void readInitCondition(int id, string simulPath);
+	~BlockFreeSurface();
+
+	void initZeroCondition();
+	void readInitCondition(int id, string simulPath);
 	void writeOutCondition(int id, string simulPath);
-    void computeInitDistribution();
-    void initFlagMap();
-    void iniVofAndMass();
-    void collision();
-    void propagation();
-    void makro();
-    void writeBlock(int id);
-    void massExchange();
-    void findFilledEmptied(int iter);
-    void vicinityFilledEmptied();
-    void newFsGeometry();
-    void findArtefactsEmptied();
-    void findArtefactsFilled();
-    void destroyArtefacts();
-    void massRedistribution();
-    void redistribute(int ind, double massRedist);
-    void calculateNormalVectors();
-    void smoothVOF(int smoothStep, int nSmoothStep);
-    void smooth3D(double* arrayin,double* arrayout,int kod);
-    void calculateCurvature();
-    void checkIfBlockEmpty();
-    void touchNeighBlocks();
-    void calculMassTotal();
-    void defineMRTmatrix();
-    void setWetAngle();
-    void findSurfaceLevels(int level);
-    double computeShearRate(int ind);
-    void setMRTdiagonal(double tau);
-    double nonNewtonianViscosityModel(double gamma);
+	void computeInitDistribution();
+	void initFlagMap();
+	void iniVofAndMass();
+	void collision();
+	void propagation();
+	void makro();
+	void writeBlock(int id);
+	void computeInterfaceTypes();
+	void massExchange();
+	void findFilledEmptied(int iter);
+	void vicinityFilledEmptied();
+	void newFsGeometry();
+	void newFsGeometryPrepare();
+	void newFsGeometryApply();
+	void findArtefactsEmptied();
+	void findArtefactsFilled();
+	void destroyArtefacts();
+	void fixFluidGasContacts();
+	void massRedistribution();
+	void redistributeMassErr();
+	void redistribute(int ind, double massRedist, int direction);
+	void calculateNormalVectors();
+	void smoothVOF(int smoothStep, int nSmoothStep);
+	void smooth3D(double* arrayin, double* arrayout, int kod);
+	void calculateCurvature();
+	void checkIfBlockEmpty();
+	void touchNeighBlocks();
+	void calculMassTotal();
+	void setWetAngle();
+	void findSurfaceLevels(int level);
+	// shear rate in lattice units computed locally from the non-equilibrium part
+	double computeShearRate(int ind);
+	double nonNewtonianViscosityModel(double gamma);
+	void outputVelocity(int ind, double* u);
+
+	// acceleration acting on the cell and fluid fraction (porosity) of the cell
+	virtual void cellForce(int ind, double* acc, double& epsF);
+	// relaxation time of the cell (non-Newtonian model)
+	virtual double localTau(int ind);
+	// collision with the exact difference method forcing
+	void collideCell(int ind, const double* acc, double epsF, double tauLoc);
+
+protected:
+	void initFreeSurface(bool isFirst, int viscosityModel, const ParamMap& par);
+	double curvatureDivergence(int ind);
+	bool curvatureHeightFunction(int ind, double& curv);
+	double vofAt(int ind, int dx, int dy, int dz);
+	void koernerPopulation(int ind, int p);
 };
 
-#endif /* BLOCKFREESURFACEBGK_H */
-
+#endif /* BLOCKFREESURFACE_H */

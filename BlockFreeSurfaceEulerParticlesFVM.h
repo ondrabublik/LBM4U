@@ -37,18 +37,19 @@ public:
 	double *dpX, *dpY, *dpZ;
 	double *fcP;
 	double dParticle, rhoParticle, crossectionParticle, volumeParticle, massParticle;
-	double *deltaValue;
+	double *deltaValue = nullptr;
 	int interpLevel;
 	double Cmax;
 	int *exLW, *eyLW, *ezLW;
 	int *oppLW;
 
-    BlockFreeSurfaceEulerParticlesFVM(bool isFirst, Block **blocks, int nBlock, int nBlockMax, int *blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int *indAll, int *indIn, int *indBound, bool isMRTModel, int viscosityModel, int nf, int *ex, int *ey, int *ez, double *w, int* opp, int ni, int nj, int nk, unordered_map<string, string> par);
+    BlockFreeSurfaceEulerParticlesFVM(bool isFirst, Block **blocks, int nBlock, int nBlockMax, int *blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int *indAll, int *indIn, int *indBound, int collisionModel, int viscosityModel, int nf, int *ex, int *ey, int *ez, double *w, int* opp, int ni, int nj, int nk, const ParamMap& par);
 
     ~BlockFreeSurfaceEulerParticlesFVM();
 
 	void readInitConcentration(int id, string simulPath);
 	void collision();
+	void cellForce(int ind, double* acc, double& epsF);
 	void computeGradP();
 	void computeNewParticleVelocityField();
 	double cd(double Uslip);
@@ -56,6 +57,10 @@ public:
 	void smoothForce();
 	double delta(double x);
 	void upwind();
+	// flux of concentration through face p (of the 6 LW directions) leaving cell ind
+	double faceFlux(int ind, int p);
+	void computeFlux();
+	void applyFlux();
 	void computeParticlePressure();
 	void computeParticlePressureGradient();
 };

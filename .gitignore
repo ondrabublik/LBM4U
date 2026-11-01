@@ -17,3 +17,8 @@ simulations
 *.log
 *.gz
 *.xlsx
+build-*/
+tests_tmp
+!CMakeLists.txt
+gui/**/bin/
+gui/**/obj/

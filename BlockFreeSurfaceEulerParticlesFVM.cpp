@@ -16,38 +16,38 @@
 
 using namespace std;
 
-BlockFreeSurfaceEulerParticlesFVM::BlockFreeSurfaceEulerParticlesFVM(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, bool mrtModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, unordered_map<string, string> par)
-	: BlockFreeSurface(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, coarseLevel, indAll, indIn, indBound, mrtModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par) {
+BlockFreeSurfaceEulerParticlesFVM::BlockFreeSurfaceEulerParticlesFVM(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par)
+	: BlockFreeSurface(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, coarseLevel, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par) {
 
-	concentration = new double[ntot];
-	fluxConcentration = new double[ntot];
+	concentration = new double[ntot]();
+	fluxConcentration = new double[ntot]();
 
-	dpX = new double[ntot];
-	dpY = new double[ntot];
-	dpZ = new double[ntot];
+	dpX = new double[ntot]();
+	dpY = new double[ntot]();
+	dpZ = new double[ntot]();
 
-	UP = new double[ntot];
-	VP = new double[ntot];
-	WP = new double[ntot];
+	UP = new double[ntot]();
+	VP = new double[ntot]();
+	WP = new double[ntot]();
 
-	PP = new double[ntot]; // particle pressure
-	dPPx = new double[ntot];
-	dPPy = new double[ntot];
-	dPPz = new double[ntot];
+	PP = new double[ntot](); // particle pressure
+	dPPx = new double[ntot]();
+	dPPy = new double[ntot]();
+	dPPz = new double[ntot]();
 
-	UF = new double[ntot];
-	VF = new double[ntot];
-	WF = new double[ntot];
+	UF = new double[ntot]();
+	VF = new double[ntot]();
+	WF = new double[ntot]();
 
-	Gx = new double[ntot];
-	Gy = new double[ntot];
-	Gz = new double[ntot];
+	Gx = new double[ntot]();
+	Gy = new double[ntot]();
+	Gz = new double[ntot]();
 
-	GxSmooth = new double[ntot];
-	GySmooth = new double[ntot];
-	GzSmooth = new double[ntot];
+	GxSmooth = new double[ntot]();
+	GySmooth = new double[ntot]();
+	GzSmooth = new double[ntot]();
 
-	fcP = new double[ntot * nf];
+	fcP = new double[ntot * nf]();
 
 	dParticle = getParDouble("particleDiameter", par, true, 0) / Ch;
 	rhoParticle = getParDouble("particleDensity", par, true, 0) / Crho;
@@ -62,11 +62,37 @@ BlockFreeSurfaceEulerParticlesFVM::BlockFreeSurfaceEulerParticlesFVM(bool isFirs
 	exLW = new int[6]{ 1, 0, 0, -1,  0,  0 };
 	eyLW = new int[6]{ 0, 1, 0,  0, -1,  0 };
 	ezLW = new int[6]{ 0, 0, 1,  0,  0, -1 };
-	oppLW = new int[6]{ 3, 0, 4, 1, 5, 2 };
+	oppLW = new int[6]{ 3, 4, 5, 0, 1, 2 };
 }
 
 BlockFreeSurfaceEulerParticlesFVM::~BlockFreeSurfaceEulerParticlesFVM() {
 	delete[] fcP;
+	delete[] concentration;
+	delete[] fluxConcentration;
+	delete[] dpX;
+	delete[] dpY;
+	delete[] dpZ;
+	delete[] UP;
+	delete[] VP;
+	delete[] WP;
+	delete[] PP;
+	delete[] dPPx;
+	delete[] dPPy;
+	delete[] dPPz;
+	delete[] UF;
+	delete[] VF;
+	delete[] WF;
+	delete[] Gx;
+	delete[] Gy;
+	delete[] Gz;
+	delete[] GxSmooth;
+	delete[] GySmooth;
+	delete[] GzSmooth;
+	delete[] exLW;
+	delete[] eyLW;
+	delete[] ezLW;
+	delete[] oppLW;
+	delete[] deltaValue;
 }
 
 void BlockFreeSurfaceEulerParticlesFVM::readInitConcentration(int id, string simulPath) {
@@ -87,8 +113,9 @@ void BlockFreeSurfaceEulerParticlesFVM::readInitConcentration(int id, string sim
 		myfile->close();
 		delete myfile;
 	}
-	catch (int ex) {
-		cout << "Error in " << fileName << endl;
+	catch (const std::exception& ex) {
+		cout << "Error in " << fileName << ": " << ex.what() << endl;
+		exit(EXIT_FAILURE);
 	}
 
 	for (int i = 0; i < ntot; i++) {
@@ -104,163 +131,93 @@ void BlockFreeSurfaceEulerParticlesFVM::readInitConcentration(int id, string sim
 	}
 }
 
+void BlockFreeSurfaceEulerParticlesFVM::cellForce(int ind, double* acc, double& epsF) {
+	// smoothed drag is a force density, the exact difference method needs an acceleration
+	double rho = Rho[ind] > 0 ? Rho[ind] : 1.0;
+	epsF = 1.0;
+	acc[0] = G[0] + GxSmooth[ind] * vof[ind] / rho;
+	acc[1] = G[1] + GySmooth[ind] * vof[ind] / rho;
+	acc[2] = G[2] + GzSmooth[ind] * vof[ind] / rho;
+}
+
 void BlockFreeSurfaceEulerParticlesFVM::collision() {
-	double force[3];
-	double feq[27];
-	double feqNew[27];
-	if (mrtModel) {
-		for (int i = 0; i < nAll; i++) {
-			int ind = indAll[i];
-			if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-				equilibrium(feq, Rho[ind], dRho[ind], U[ind], V[ind], W[ind]);
-				force[0] = G[0] + GxSmooth[ind] * vof[ind];
-				force[1] = G[1] + GySmooth[ind] * vof[ind];
-				force[2] = G[2] + GzSmooth[ind] * vof[ind];
-				equilibrium(feqNew, Rho[ind], dRho[ind], U[ind] + force[0], V[ind] + force[1], W[ind] + force[2]);
-				for (int p = 0; p < nf; p++) {
-					double sum = 0;
-					int pind = nf * ind + p;
-					for (int q = 0; q < nf; q++) {
-						int qind = nf * ind + q;
-						sum += T[nf * p + q] * (f[qind] - feq[q]);
-					}
-					double bodyForce = feqNew[p] - feq[p];
-					fc[pind] = f[pind] - sum + bodyForce;
-				}
-			}
-			Gx[ind] = 0;
-			Gy[ind] = 0;
-			Gz[ind] = 0;
-			GxSmooth[ind] = 0;
-			GySmooth[ind] = 0;
-			GzSmooth[ind] = 0;
+	BlockFreeSurface::collision();
+	for (int i = 0; i < nAll; i++) {
+		int ind = indAll[i];
+		Gx[ind] = 0;
+		Gy[ind] = 0;
+		Gz[ind] = 0;
+		GxSmooth[ind] = 0;
+		GySmooth[ind] = 0;
+		GzSmooth[ind] = 0;
+	}
+}
+
+double BlockFreeSurfaceEulerParticlesFVM::faceFlux(int ind, int p) {
+	int bl, loc;
+	local2globalShift(indBlock, ind, bl, loc, exLW[p], eyLW[p], ezLW[p]);
+	if (bl < 0 || bl >= nBlockMax || !blocks[bl] || blocks[bl]->boundary[loc]) {
+		return 0;
+	}
+	BlockFreeSurfaceEulerParticlesFVM* bs = (BlockFreeSurfaceEulerParticlesFVM*)blocks[bl];
+	if (bs->flagMap[loc] != 1 && bs->flagMap[loc] != 3) {
+		return 0;
+	}
+	double cA = concentration[ind];
+	double cB = bs->concentration[loc];
+	double Un = (bs->UP[loc] + UP[ind]) / 2 * exLW[p] + (bs->VP[loc] + VP[ind]) / 2 * eyLW[p] + (bs->WP[loc] + WP[ind]) / 2 * ezLW[p];
+	// low order (upwind) and high order (Lax-Wendroff) flux
+	double fluxLow = (Un > 0) ? Un * cA : Un * cB;
+	double fluxHigh = Un * (cA + cB) / 2 - Un * Un * (cB - cA) / 2;
+
+	// limiter
+	double limiter = 0;
+	int blO, locO;
+	int pop = oppLW[p];
+	local2globalShift(indBlock, ind, blO, locO, exLW[pop], eyLW[pop], ezLW[pop]);
+	if (blO > -1 && blO < nBlockMax && blocks[blO] && !blocks[blO]->boundary[locO]) {
+		BlockFreeSurfaceEulerParticlesFVM* bo = (BlockFreeSurfaceEulerParticlesFVM*)blocks[blO];
+		if ((bo->flagMap[locO] == 1 || bo->flagMap[locO] == 3) && cB != cA) {
+			double r = (cA - bo->concentration[locO]) / (cB - cA);
+			limiter = (r + fabs(r)) / (1 + fabs(r));
 		}
 	}
-	else {
-		for (int i = 0; i < nAll; i++) {
-			int ind = indAll[i];
-			if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-				equilibrium(feq, Rho[ind], dRho[ind], U[ind], V[ind], W[ind]);
-				force[0] = G[0] + GxSmooth[ind] * vof[ind];
-				force[1] = G[1] + GySmooth[ind] * vof[ind];
-				force[2] = G[2] + GzSmooth[ind] * vof[ind];
-				equilibrium(feqNew, Rho[ind], dRho[ind], U[ind] + force[0], V[ind] + force[1], W[ind] + force[2]);
-				for (int p = 0; p < nf; p++) {
-					int pind = nf * ind + p;
-					double bodyForce = feqNew[p] - feq[p];
-					fc[pind] = f[pind] - 1.0 / tau * (f[pind] - feq[p]) + bodyForce;
-				}
+	return fluxLow - limiter * (fluxLow - fluxHigh);
+}
+
+// conservative: each face contributes (F(A->B) - F(B->A))/2, the neighbour computes the same value with opposite sign
+void BlockFreeSurfaceEulerParticlesFVM::computeFlux() {
+	for (int i = 0; i < nAll; i++) {
+		int ind = indAll[i];
+		fluxConcentration[ind] = 0;
+		if (boundary[ind] || (flagMap[ind] != 1 && flagMap[ind] != 3)) {
+			continue;
+		}
+		for (int p = 0; p < 6; p++) {
+			int bl, loc;
+			local2globalShift(indBlock, ind, bl, loc, exLW[p], eyLW[p], ezLW[p]);
+			if (bl < 0 || bl >= nBlockMax || !blocks[bl] || blocks[bl]->boundary[loc]) {
+				continue;
 			}
-			Gx[ind] = 0;
-			Gy[ind] = 0;
-			Gz[ind] = 0;
-			GxSmooth[ind] = 0;
-			GySmooth[ind] = 0;
-			GzSmooth[ind] = 0;
+			BlockFreeSurfaceEulerParticlesFVM* bs = (BlockFreeSurfaceEulerParticlesFVM*)blocks[bl];
+			if (bs->flagMap[loc] != 1 && bs->flagMap[loc] != 3) {
+				continue;
+			}
+			fluxConcentration[ind] += (faceFlux(ind, p) - bs->faceFlux(loc, oppLW[p])) / 2;
 		}
 	}
 }
 
-void BlockFreeSurfaceEulerParticlesFVM::upwind() {
-	double fluxLow;
-	double fluxHigh;
-	for (int i = 0; i < nAll; i++) {
-		int ind = indAll[i];
-		fluxConcentration[ind] = 0;
-	}
-
-	for (int i = 0; i < nIn; i++) {
-		int ind = indIn[i];
-		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-			for (int p = 0; p < 6; p++) {
-				int indShift = ind + (ni * nj) * ezLW[p] + ni * eyLW[p] + exLW[p];
-				if ((flagMap[indShift] == 1 || flagMap[indShift] == 3) && !boundary[indShift]) {
-					// compute low order flux
-					double Un = (UP[indShift] + UP[ind]) / 2 * exLW[p] + (VP[indShift] + VP[ind]) / 2 * eyLW[p] + (WP[indShift] + WP[ind]) / 2 * ezLW[p];
-					if (Un > 0) {
-						fluxLow = Un * concentration[ind];
-					}
-					else {
-						fluxLow = Un * concentration[indShift];
-					}
-
-					// compute high order flux
-					fluxHigh = Un * (concentration[ind] + concentration[indShift]) / 2 - Un*Un*(concentration[indShift] - concentration[ind])/2;
-
-					// compute limiter
-					int pop = oppLW[p];
-					int indShiftOpp = ind + (ni * nj) * ezLW[pop] + ni * eyLW[pop] + exLW[pop];
-					double limiter = 0;
-					if ((flagMap[indShiftOpp] == 1 || flagMap[indShiftOpp] == 3) && !boundary[indShiftOpp]) {
-						if (concentration[indShift] != concentration[ind]) {
-							double r = (concentration[ind] - concentration[indShiftOpp]) / (concentration[indShift] - concentration[ind]);
-							limiter = (r + abs(r)) / (1 + abs(r));
-						}
-					}
-
-					double flux = fluxLow - limiter * (fluxLow - fluxHigh);
-					fluxConcentration[ind] += flux/2;
-					fluxConcentration[indShift] -= flux/2;
-				}
-			}
-		}
-	}
-
-	int indBlockShift = 0;
-	int indShift = 0;
-	for (int i = 0; i < nBound; i++) {
-		int ind = indBound[i];
-		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-			for (int p = 0; p < 6; p++) {
-				local2globalShift(indBlock, ind, indBlockShift, indShift, exLW[p], eyLW[p], ezLW[p]);
-				if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
-					BlockFreeSurfaceEulerParticlesFVM* bs = ((BlockFreeSurfaceEulerParticlesFVM*)blocks[indBlockShift]);
-					int flag = bs->flagMap[indShift];
-					bool boundarys = bs->boundary[indShift];
-					if ((flag == 1 || flag == 3) && !boundarys) {
-						double Un = (bs->UP[indShift] + UP[ind]) / 2 * exLW[p] + (bs->VP[indShift] + VP[ind]) / 2 * eyLW[p] + (bs->WP[indShift] + WP[ind]) / 2 * ezLW[p];
-						if (Un > 0) {
-							fluxLow = Un * concentration[ind];
-						}
-						else {
-							fluxLow = Un * bs->concentration[indShift];
-						}
-						fluxHigh = Un * (concentration[ind] + concentration[indShift]) / 2 - Un * Un * (concentration[indShift] - concentration[ind]) / 2;
-
-						// compute limiter
-						int indBlockShiftOpp = 0;
-						int indShiftOpp = 0;
-						int pop = oppLW[p];
-						double limiter = 0;
-						local2globalShift(indBlock, ind, indBlockShiftOpp, indShiftOpp, exLW[pop], eyLW[pop], ezLW[pop]);
-						if (indBlockShiftOpp > -1 && indBlockShiftOpp < nBlockMax && blocks[indBlockShiftOpp]) {
-							BlockFreeSurfaceEulerParticlesFVM* bsOpp = ((BlockFreeSurfaceEulerParticlesFVM*)blocks[indBlockShiftOpp]);
-							int flag = bsOpp->flagMap[indShiftOpp];
-							bool boundarys = bsOpp->boundary[indShiftOpp];
-							if ((flag == 1 || flag == 3) && !boundarys) {
-								if (bs->concentration[indShift] != concentration[ind]) {
-									double r = (concentration[ind] - bsOpp->concentration[indShiftOpp]) / (bs->concentration[indShift] - concentration[ind]);
-									limiter = (r + abs(r)) / (1 + abs(r));
-								}
-							}
-						}
-
-						double flux = fluxLow - limiter * (fluxLow - fluxHigh);
-						fluxConcentration[ind] += flux/2;
-						fluxConcentration[indShift] -= flux/2;
-					}
-				}
-			}
-		}
-	}
-
-	double Ctotal = 0;
+void BlockFreeSurfaceEulerParticlesFVM::applyFlux() {
 	for (int i = 0; i < nAll; i++) {
 		int ind = indAll[i];
 		concentration[ind] -= fluxConcentration[ind];
-		Ctotal += concentration[ind];
 	}
-	//cout << Ctotal << endl;
+}
+
+void BlockFreeSurfaceEulerParticlesFVM::upwind() {
+	computeFlux();
+	applyFlux();
 }
 
 void BlockFreeSurfaceEulerParticlesFVM::computeNewParticleVelocityField() {
@@ -354,8 +311,8 @@ void BlockFreeSurfaceEulerParticlesFVM::computeGradP() {
 		dpZ[ind] = 0;
 		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
 			for (int dir = 1; dir < nf; dir++) {
-				int indBlockShift = bShift[nAll * dir + ind];
-				int indShift = shift[nAll * dir + ind];
+				int indBlockShift = nbBlock(ind, dir);
+				int indShift = nbLocal(ind, dir);
 				bool dirExist = false;
 				if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
 					int fm = ((BlockFreeSurface*)blocks[indBlockShift])->flagMap[indShift];
@@ -502,8 +459,8 @@ void BlockFreeSurfaceEulerParticlesFVM::computeParticlePressureGradient() {
 		dPPz[ind] = 0;
 		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
 			for (int dir = 1; dir < nf; dir++) {
-				int indBlockShift = bShift[nAll * dir + ind];
-				int indShift = shift[nAll * dir + ind];
+				int indBlockShift = nbBlock(ind, dir);
+				int indShift = nbLocal(ind, dir);
 				bool dirExist = false;
 				if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
 					int fm = ((BlockFreeSurface*)blocks[indBlockShift])->flagMap[indShift];

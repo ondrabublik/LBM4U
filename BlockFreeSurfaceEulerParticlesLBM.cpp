@@ -9,62 +9,62 @@
   * File:   BlockFreeSurfaceEulerParticlesLBM.cpp
   * Author: obublik
   *
-  * Created on 2. února 2018, 12:27
+  * Created on 2. ï¿½nora 2018, 12:27
   */
 
 #include "BlockFreeSurfaceEulerParticlesLBM.h"
 
 using namespace std;
 
-BlockFreeSurfaceEulerParticlesLBM::BlockFreeSurfaceEulerParticlesLBM(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, bool mrtModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, unordered_map<string, string> par)
-	: BlockFreeSurface(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, coarseLevel, indAll, indIn, indBound, mrtModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par) {
+BlockFreeSurfaceEulerParticlesLBM::BlockFreeSurfaceEulerParticlesLBM(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par)
+	: BlockFreeSurface(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, coarseLevel, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par) {
 
-	concentration = new double[ntot];
-	gc = new double[ntot * nf];
-	g = new double[ntot * nf];
+	concentration = new double[ntot]();
+	gc = new double[ntot * nf]();
+	g = new double[ntot * nf]();
 
-	dpX = new double[ntot];
-	dpY = new double[ntot];
-	dpZ = new double[ntot];
+	dpX = new double[ntot]();
+	dpY = new double[ntot]();
+	dpZ = new double[ntot]();
 
-	dcX = new double[ntot];
-	dcY = new double[ntot];
-	dcZ = new double[ntot];
+	dcX = new double[ntot]();
+	dcY = new double[ntot]();
+	dcZ = new double[ntot]();
 
-	gVOFpX = new double[ntot];
-	gVOFpY = new double[ntot];
-	gVOFpZ = new double[ntot];
+	gVOFpX = new double[ntot]();
+	gVOFpY = new double[ntot]();
+	gVOFpZ = new double[ntot]();
 
-	UP = new double[ntot];
-	VP = new double[ntot];
-	WP = new double[ntot];
+	UP = new double[ntot]();
+	VP = new double[ntot]();
+	WP = new double[ntot]();
 
-	gUx = new double[ntot];
-	gUy = new double[ntot];
-	gUz = new double[ntot];
+	gUx = new double[ntot]();
+	gUy = new double[ntot]();
+	gUz = new double[ntot]();
 
-	gVx = new double[ntot];
-	gVy = new double[ntot];
-	gVz = new double[ntot];
+	gVx = new double[ntot]();
+	gVy = new double[ntot]();
+	gVz = new double[ntot]();
 
-	gWx = new double[ntot];
-	gWy = new double[ntot];
-	gWz = new double[ntot];
+	gWx = new double[ntot]();
+	gWy = new double[ntot]();
+	gWz = new double[ntot]();
 
-	UF = new double[ntot];
-	VF = new double[ntot];
-	WF = new double[ntot];
+	UF = new double[ntot]();
+	VF = new double[ntot]();
+	WF = new double[ntot]();
 
-	Gx = new double[ntot];
-	Gy = new double[ntot];
-	Gz = new double[ntot];
+	Gx = new double[ntot]();
+	Gy = new double[ntot]();
+	Gz = new double[ntot]();
 
-	GxSmooth = new double[ntot];
-	GySmooth = new double[ntot];
-	GzSmooth = new double[ntot];
+	GxSmooth = new double[ntot]();
+	GySmooth = new double[ntot]();
+	GzSmooth = new double[ntot]();
 
-	tauDir = new double[ntot * nf];
-	user_def = new double[ntot];
+	tauDir = new double[ntot * nf]();
+	user_def = new double[ntot]();
 
 	dParticle = getParDouble("particleDiameter", par, true, 0) / Ch;
 	rhoParticle = getParDouble("particleDensity", par, true, 0) / Crho;
@@ -132,6 +132,20 @@ BlockFreeSurfaceEulerParticlesLBM::~BlockFreeSurfaceEulerParticlesLBM() {
 	delete[] GxSmooth;
 	delete[] GySmooth;
 	delete[] GzSmooth;
+	delete[] concentration;
+	delete[] gUx;
+	delete[] gUy;
+	delete[] gUz;
+	delete[] gVx;
+	delete[] gVy;
+	delete[] gVz;
+	delete[] gWx;
+	delete[] gWy;
+	delete[] gWz;
+	delete[] tauDir;
+	delete[] user_def;
+	delete[] positiveDirs;
+	delete[] deltaValue;
 }
 
 void BlockFreeSurfaceEulerParticlesLBM::readInitConcentration(int id, string simulPath) {
@@ -152,8 +166,9 @@ void BlockFreeSurfaceEulerParticlesLBM::readInitConcentration(int id, string sim
 		myfile->close();
 		delete myfile;
 	}
-	catch (int ex) {
-		cout << "Error in " << fileName << endl;
+	catch (const std::exception& ex) {
+		cout << "Error in " << fileName << ": " << ex.what() << endl;
+		exit(EXIT_FAILURE);
 	}
 
 	for (int i = 0; i < ntot; i++) {
@@ -212,8 +227,8 @@ void BlockFreeSurfaceEulerParticlesLBM::propagationScalar() {
 		int ind = indBound[i];
 		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
 			for (int p = 0; p < nf; p++) {
-				int indLocalNeigh = shift[nAll * p + ind];
-				int indBlockNeigh = bShift[nAll * p + ind];
+				int indLocalNeigh = nbLocal(ind, p);
+				int indBlockNeigh = nbBlock(ind, p);
 				bool noBlockWall = indBlockNeigh > -1 && indBlockNeigh < nBlockMax && blocks[indBlockNeigh];
 				if (noBlockWall) {
 					if (blocks[indBlockNeigh]->boundary[indLocalNeigh] || ((BlockFreeSurfaceEulerParticlesLBM*)blocks[indBlockNeigh])->flagMap[indLocalNeigh] == 2) { // wall boundary
@@ -290,9 +305,10 @@ void BlockFreeSurfaceEulerParticlesLBM::computeNewParticleVelocityField(double* 
 				double Cd_mult_Uslip = cd(Uslip);
 				double coef = 0.5 * Cd_mult_Uslip * area;
 
-				UP[ind] = (mass * (UP[ind] - UP[ind] * gUx[ind] - VP[ind] * gUy[ind] - WP[ind] * gUz[ind]) + coef * UF[ind] + G[0] * (mass - volume)) / (mass + coef);
-				VP[ind] = (mass * (VP[ind] - UP[ind] * gVx[ind] - VP[ind] * gVy[ind] - WP[ind] * gVz[ind]) + coef * VF[ind] + G[1] * (mass - volume)) / (mass + coef);
-				WP[ind] = (mass * (WP[ind] - UP[ind] * gWx[ind] - VP[ind] * gWy[ind] - WP[ind] * gWz[ind]) + coef * WF[ind] + G[2] * (mass - volume)) / (mass + coef);
+				double up = UP[ind], vp = VP[ind], wp = WP[ind];
+				UP[ind] = (mass * (up - up * gUx[ind] - vp * gUy[ind] - wp * gUz[ind]) + coef * UF[ind] + G[0] * (mass - volume)) / (mass + coef);
+				VP[ind] = (mass * (vp - up * gVx[ind] - vp * gVy[ind] - wp * gVz[ind]) + coef * VF[ind] + G[1] * (mass - volume)) / (mass + coef);
+				WP[ind] = (mass * (wp - up * gWx[ind] - vp * gWy[ind] - wp * gWz[ind]) + coef * WF[ind] + G[2] * (mass - volume)) / (mass + coef);
 					
 				if (dist[ind] < 1) {
 					UP[ind] = UF[ind];
@@ -371,8 +387,8 @@ void BlockFreeSurfaceEulerParticlesLBM::computeGradP() {
 		dpZ[ind] = 0;
 		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
 			for (int dir = 1; dir < nf; dir++) {
-				int indBlockShift = bShift[nAll * dir + ind];
-				int indShift = shift[nAll * dir + ind];
+				int indBlockShift = nbBlock(ind, dir);
+				int indShift = nbLocal(ind, dir);
 				bool dirExist = false;
 				if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
 					int fm = ((BlockFreeSurface*)blocks[indBlockShift])->flagMap[indShift];
@@ -467,8 +483,8 @@ void BlockFreeSurfaceEulerParticlesLBM::computeGradU() {
 		gWz[ind] = 0;
 		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
 			for (int dir = 1; dir < nf; dir++) {
-				int indBlockShift = bShift[nAll * dir + ind];
-				int indShift = shift[nAll * dir + ind];
+				int indBlockShift = nbBlock(ind, dir);
+				int indShift = nbLocal(ind, dir);
 				bool dirExist = false;
 				if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
 					int fm = ((BlockFreeSurface*)blocks[indBlockShift])->flagMap[indShift];
@@ -547,8 +563,8 @@ void BlockFreeSurfaceEulerParticlesLBM::computeGradC() {
 		dcZ[ind] = 0;
 		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
 			for (int dir = 1; dir < nf; dir++) {
-				int indBlockShift = bShift[nAll * dir + ind];
-				int indShift = shift[nAll * dir + ind];
+				int indBlockShift = nbBlock(ind, dir);
+				int indShift = nbLocal(ind, dir);
 				bool dirExist = false;
 				if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
 					int fm = ((BlockFreeSurface*)blocks[indBlockShift])->flagMap[indShift];
@@ -616,8 +632,8 @@ void BlockFreeSurfaceEulerParticlesLBM::computeGradVOFp() {
 		gVOFpY[ind] = 0;
 		gVOFpZ[ind] = 0;
 			for (int dir = 1; dir < nf; dir++) {
-				int indBlockShift = bShift[nAll * dir + ind];
-				int indShift = shift[nAll * dir + ind];
+				int indBlockShift = nbBlock(ind, dir);
+				int indShift = nbLocal(ind, dir);
 				bool dirExist = false;
 				if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
 					if (!(blocks[indBlockShift]->boundary[indShift])) {
@@ -642,92 +658,25 @@ void BlockFreeSurfaceEulerParticlesLBM::computeGradVOFp() {
 	}
 }
 
-void BlockFreeSurfaceEulerParticlesLBM::collision() {
-	double force[3];
-	double feq[27];
-	double feqNew[27];
-	double fAux[27];
-	if (mrtModel) {
-		for (int i = 0; i < nAll; i++) {
-			int ind = indAll[i];
-			if (viscosityModel > 0) {
-				shearRate[ind] = 0;
-				viscosity[ind] = 0;
-			}
-			if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-				double epsF = limitFraction(1 - concentration[ind] * volumeParticle);
-				equilibrium(feq, Rho[ind], dRho[ind], U[ind], V[ind], W[ind], epsF);
-				force[0] = G[0] * epsF + GxSmooth[ind] * vof[ind];
-				force[1] = G[1] * epsF + GySmooth[ind] * vof[ind];
-				force[2] = G[2] * epsF + GzSmooth[ind] * vof[ind];
-				equilibrium(feqNew, Rho[ind], dRho[ind], U[ind] + force[0], V[ind] + force[1], W[ind] + force[2], epsF);
-				if (viscosityModel > 0) {
-					shearRate[ind] = computeShearRate(ind) / Ct;
-					viscosity[ind] = nonNewtonianViscosityModel(shearRate[ind]);
-					double tauLoc = 0.5 + 3 * viscosity[ind] / Cvis;
-					if (tauLoc > 1.5) {
-						tauLoc = 1.5;
-					}
-					if (tauLoc < 0.5 + 1e-4) {
-						tauLoc = 0.5 + 1e-4;
-					}
+void BlockFreeSurfaceEulerParticlesLBM::cellForce(int ind, double* acc, double& epsF) {
+	// smoothed drag is a force density, the exact difference method needs an acceleration
+	double rho = Rho[ind] > 0 ? Rho[ind] : 1.0;
+	epsF = limitFraction(1 - concentration[ind] * volumeParticle);
+	acc[0] = G[0] * epsF + GxSmooth[ind] * vof[ind] / rho;
+	acc[1] = G[1] * epsF + GySmooth[ind] * vof[ind] / rho;
+	acc[2] = G[2] * epsF + GzSmooth[ind] * vof[ind] / rho;
+}
 
-					double omega = 1 / tauLoc;
-					for (int p = 0; p < nf; p++) {
-						double sum = 0;
-						int pind = nf * ind + p;
-						for (int q = 0; q < nf; q++) {
-							int qind = nf * ind + q;
-							sum += (T0[nf * p + q] + omega * T1[nf * p + q]) * (f[qind] - feq[q]);
-						}
-						double bodyForce = feqNew[p] - feq[p];
-						fc[pind] = f[pind] - sum + bodyForce;
-					}
-				}
-				else {
-					for (int p = 0; p < nf; p++) {
-						double sum = 0;
-						int pind = nf * ind + p;
-						for (int q = 0; q < nf; q++) {
-							int qind = nf * ind + q;
-							sum += T[nf * p + q] * (f[qind] - feq[q]);
-						}
-						double bodyForce = feqNew[p] - feq[p];
-						fc[pind] = f[pind] - sum + bodyForce;
-					}
-				}
-			}
-			Gx[ind] = 0;
-			Gy[ind] = 0;
-			Gz[ind] = 0;
-			GxSmooth[ind] = 0;
-			GySmooth[ind] = 0;
-			GzSmooth[ind] = 0;
-		}
-	}
-	else {
-		for (int i = 0; i < nAll; i++) {
-			int ind = indAll[i];
-			if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-				double epsF = limitFraction(1 - concentration[ind] * volumeParticle);
-				equilibrium(feq, Rho[ind], dRho[ind], U[ind], V[ind], W[ind], epsF);
-				force[0] = G[0] * epsF + GxSmooth[ind] * vof[ind];
-				force[1] = G[1] * epsF + GySmooth[ind] * vof[ind];
-				force[2] = G[2] * epsF + GzSmooth[ind] * vof[ind];
-				equilibrium(feqNew, Rho[ind], dRho[ind], U[ind] + force[0], V[ind] + force[1], W[ind] + force[2], epsF);
-				for (int p = 0; p < nf; p++) {
-					int pind = nf * ind + p;
-					double bodyForce = feqNew[p] - feq[p];
-					fc[pind] = f[pind] - 1.0 / tau * (f[pind] - feq[p]) + bodyForce;
-				}
-			}
-			Gx[ind] = 0;
-			Gy[ind] = 0;
-			Gz[ind] = 0;
-			GxSmooth[ind] = 0;
-			GySmooth[ind] = 0;
-			GzSmooth[ind] = 0;
-		}
+void BlockFreeSurfaceEulerParticlesLBM::collision() {
+	BlockFreeSurface::collision();
+	for (int i = 0; i < nAll; i++) {
+		int ind = indAll[i];
+		Gx[ind] = 0;
+		Gy[ind] = 0;
+		Gz[ind] = 0;
+		GxSmooth[ind] = 0;
+		GySmooth[ind] = 0;
+		GzSmooth[ind] = 0;
 	}
 }
 
@@ -862,11 +811,11 @@ void BlockFreeSurfaceEulerParticlesLBM::setTau() {
 				int pFor = positiveDirs[p];
 				int pBack = opp[pFor];
 
-				int indBlockShiftFor = bShift[nAll * pFor + ind];
-				int indShiftFor = shift[nAll * pFor + ind];
+				int indBlockShiftFor = nbBlock(ind, pFor);
+				int indShiftFor = nbLocal(ind, pFor);
 
-				int indBlockShiftBack = bShift[nAll * pBack + ind];
-				int indShiftBack = shift[nAll * pBack + ind];
+				int indBlockShiftBack = nbBlock(ind, pBack);
+				int indShiftBack = nbLocal(ind, pBack);
 
 				double cm = concentration[ind];
 				double cf = concentration[ind];

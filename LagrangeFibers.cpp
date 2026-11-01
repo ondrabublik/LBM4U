@@ -499,8 +499,9 @@ void LagrangeFibers::readInitFibersDistribution(string simulPath, double Ch, dou
 		myfile->close();
 		delete myfile;
 	}
-	catch (int ex) {
-		cout << "Error in " << fileName << endl;
+	catch (const std::exception& ex) {
+		cout << "Error in " << fileName << ": " << ex.what() << endl;
+		exit(EXIT_FAILURE);
 	}
 	cout << nFibers << " Lagrangian fibers were readed!" << endl;
 }

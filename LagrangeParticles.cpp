@@ -589,14 +589,12 @@ void LagrangeParticles::particleBarrierForce(int iter) {
 	double t = iter * Ct;
 	double yBarier = 0.11;
 	double tRemove = 0;
-#pragma omp parallel
-	for (int p = 0; p < nParticles; p++) {
-		if (t < tRemove) {
-			for (int p = 0; p < nParticles; p++) {
-				double dy = Ch * partY[p] - yBarier;
-				if (dy < 0) {
-					FinterY[p] += gammaWall(dy, 0.1);
-				}
+	if (t < tRemove) {
+#pragma omp parallel for
+		for (int p = 0; p < nParticles; p++) {
+			double dy = Ch * partY[p] - yBarier;
+			if (dy < 0) {
+				FinterY[p] += gammaWall(dy, 0.1);
 			}
 		}
 	}
@@ -609,7 +607,7 @@ void LagrangeParticles::readInitParticlesDistribution(string simulPath, double C
 		ifstream* myfile = new ifstream(fileName);
 		if (myfile->is_open()) {
 			getline(*myfile, line);
-			nParticles = stod(line);
+			nParticles = stoi(line);
 			partD = new double[nParticles];
 			partRho = new double[nParticles];
 			partMass = new double[nParticles];
@@ -679,8 +677,9 @@ void LagrangeParticles::readInitParticlesDistribution(string simulPath, double C
 		myfile->close();
 		delete myfile;
 	}
-	catch (int ex) {
-		cout << "Error in " << fileName << endl;
+	catch (const std::exception& ex) {
+		cout << "Error in " << fileName << ": " << ex.what() << endl;
+		exit(EXIT_FAILURE);
 	}
 	cout << nParticles << " Lagrangian particles were readed!" << endl;
 }

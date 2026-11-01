@@ -1,15 +1,14 @@
 /*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
-
-/* 
- * File:   Block.h
+ * File:   BlockBasic.h
  * Author: obublik
  *
  * Created on 2. února 2018, 12:27
+ *
+ * Single phase LBM block (BGK/TRT/MRT) with Guo forcing.
  */
+
+#ifndef BLOCKBGK_H
+#define BLOCKBGK_H
 
 #include <iostream>
 #include <fstream>
@@ -18,31 +17,27 @@
 #include <iterator>
 #include <vector>
 #include <unordered_map>
-#include "math.h"
+#include <cmath>
 #include "Block.h"
 
-#ifndef BLOCKBGK_H
-#define BLOCKBGK_H
-
-class BlockBasic : public Block{
+class BlockBasic : public Block {
 public:
 
-    double *T;
+	BlockBasic(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, int collisionModel, bool isTauVariable, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par);
 
-    BlockBasic(bool isFirst, Block **blocks, int nBlock, int nBlockMax, int *blockIndex, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, bool isMRTModel, bool isTauVariable, int nf, int *ex, int *ey, int *ez, double *w, int* opp, int ni, int nj, int nk, unordered_map<string, string> par);
+	~BlockBasic();
 
-    ~BlockBasic();
+	void initZeroCondition();
+	void readInitCondition(int i, string simulPath);
+	void computeInitDistribution();
+	// fused computation of the moments and the collision
+	void collision();
+	void propagation();
+	void makro();
+	void writeBlock(int id);
 
-    void initZeroCondition();
-    void readInitCondition(int i, string simulPath);
-    void computeInitDistribution();
-    void eval(int iter);
-    void collision();
-    void propagation();
-    void makro();
-    void defineMRTmatrix();
-    void writeBlock(int id);
+private:
+	void moments(int ind, double& rho, double* u);
 };
 
 #endif /* BLOCKBGK_H */
-

@@ -19,7 +19,6 @@
 #include <iterator>
 #include <vector>
 #include "math.h"
-#include <windows.h>
 #include <string>
 #include <unordered_map>
 
