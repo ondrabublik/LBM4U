@@ -79,17 +79,51 @@ namespace LBMStudio
             return FindOnPath("gmsh.exe");
         }
 
-        static bool PythonHasGmsh()
+        static string pythonWithGmsh;
+        static bool pythonSearched;
+
+        /// <summary>
+        /// Full path of a Python interpreter with the module "gmsh", or null. Process.Start("python") resolves
+        /// only python.exe on PATH and skips .bat shims (pyenv-win), so it can pick a different interpreter
+        /// than the terminal does. The candidates are therefore started through cmd.exe and the py launcher
+        /// and the interpreter reports its own path.
+        /// </summary>
+        static string FindPythonWithGmsh()
         {
-            try
+            if (pythonSearched)
             {
-                int code = Run("python", "-c \"import gmsh\"", 60000, out _);
-                return code == 0;
+                return pythonWithGmsh;
             }
-            catch (Exception)
+            const string probe = "-c \"import gmsh, sys; print(sys.executable)\"";
+            var candidates = new[]
             {
-                return false;
+                new[] { "cmd.exe", "/c python " + probe },
+                new[] { "py", "-3 " + probe },
+                new[] { "python", probe }
+            };
+            foreach (var c in candidates)
+            {
+                try
+                {
+                    string output;
+                    if (Run(c[0], c[1], 60000, out output) != 0)
+                    {
+                        continue;
+                    }
+                    string exe = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(l => l.Trim()).LastOrDefault(File.Exists);
+                    if (exe != null)
+                    {
+                        pythonWithGmsh = exe;
+                        break;
+                    }
+                }
+                catch (Exception)
+                {
+                }
             }
+            pythonSearched = true;
+            return pythonWithGmsh;
         }
 
         /// <summary>Text describing the available converters.</summary>
@@ -99,6 +133,10 @@ namespace LBMStudio
             if (FindGmsh(s) != null)
             {
                 list.Add("gmsh");
+            }
+            else if (FindPythonWithGmsh() != null)
+            {
+                list.Add("gmsh (Python)");
             }
             if (FindFreeCad(s) != null)
             {
@@ -132,7 +170,8 @@ namespace LBMStudio
                     return;
                 }
             }
-            if (PythonHasGmsh())
+            string python = FindPythonWithGmsh();
+            if (python != null)
             {
                 string script = Path.Combine(Path.GetTempPath(), "lbmstudio_step2stl.py");
                 File.WriteAllText(script,
@@ -144,8 +183,8 @@ namespace LBMStudio
                     "gmsh.model.mesh.generate(2)\n" +
                     "gmsh.write(sys.argv[2])\n" +
                     "gmsh.finalize()\n");
-                log("python gmsh " + step);
-                Run("python", "\"" + script + "\" \"" + step + "\" \"" + stl + "\"", 600000, out output);
+                log(python + " (gmsh) " + step);
+                Run(python,"\"" + script + "\" \"" + step + "\" \"" + stl + "\"", 600000, out output);
                 log(output);
                 if (File.Exists(stl))
                 {
