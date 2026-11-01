@@ -16,9 +16,47 @@ namespace LBMStudio
             {
                 return SelfTest.Run(args[1], args[2], args.Length > 3 ? args[3] : null);
             }
-            Application.ThreadException += (s, e) => MessageBox.Show(e.Exception.Message, "LBM Studio", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            Application.ThreadException += (s, e) => ShowError(e.Exception);
             Application.Run(new MainForm());
             return 0;
+        }
+
+        static bool showingError;
+        static string lastError;
+        static DateTime lastErrorTime;
+
+        /// <summary>
+        /// Shows an unhandled exception. An error repeated from OnPaint or a timer would otherwise open
+        /// message boxes endlessly and block the window, so a repeated message is only logged.
+        /// </summary>
+        static void ShowError(Exception ex)
+        {
+            try
+            {
+                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LBMStudio");
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(Path.Combine(dir, "error.log"), DateTime.Now.ToString("s") + " " + ex + Environment.NewLine);
+            }
+            catch (Exception)
+            {
+            }
+            bool repeated = ex.Message == lastError && (DateTime.Now - lastErrorTime).TotalSeconds < 5;
+            lastError = ex.Message;
+            lastErrorTime = DateTime.Now;
+            if (showingError || repeated)
+            {
+                return;
+            }
+            showingError = true;
+            try
+            {
+                MessageBox.Show(ex.Message, "LBM Studio", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                showingError = false;
+                lastErrorTime = DateTime.Now;
+            }
         }
     }
 

@@ -123,6 +123,7 @@ namespace LBMStudio
             cbResSim.Items.Clear();
             if (geom == null)
             {
+                LoadResultList();
                 return;
             }
             foreach (var item in lbSims.Items)
@@ -142,6 +143,11 @@ namespace LBMStudio
                 cbResSim.SelectedIndex = 0;
             }
             cellTypes = geom.MeshReady ? geom.LoadCellTypes(settings.Workspace) : null;
+            if (cbResSim.SelectedIndex < 0)
+            {
+                // no simulation selected, drop the fields of the previous geometry
+                LoadResultList();
+            }
         }
 
         string ResultSimDir
@@ -217,7 +223,7 @@ namespace LBMStudio
 
         void UpdateSlice()
         {
-            if (fields == null)
+            if (fields == null || geom == null || !geom.MeshReady)
             {
                 return;
             }

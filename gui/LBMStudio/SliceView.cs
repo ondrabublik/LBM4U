@@ -89,8 +89,14 @@ namespace LBMStudio
 
         void BuildImage()
         {
+            // a disposed bitmap left in the field would throw in every OnPaint
             image?.Dispose();
+            image = null;
             int na = values.GetLength(0), nb = values.GetLength(1);
+            if (na == 0 || nb == 0)
+            {
+                return;
+            }
             image = new Bitmap(na, nb, PixelFormat.Format32bppArgb);
             var data = image.LockBits(new Rectangle(0, 0, na, nb), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
             var px = new int[na * nb];
