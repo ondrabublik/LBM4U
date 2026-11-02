@@ -123,7 +123,7 @@ namespace LBMStudio
             double v;
             if (!TryParse(s, out v))
             {
-                throw new FormatException("Neplatná hodnota pole \"" + what + "\": " + s);
+                throw new FormatException("Invalid value of the field \"" + what + "\": " + s);
             }
             return v;
         }

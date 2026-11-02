@@ -30,11 +30,11 @@ namespace LBMStudio
         {
             if (Running)
             {
-                throw new InvalidOperationException("Výpočet už běží.");
+                throw new InvalidOperationException("A computation is already running.");
             }
             if (string.IsNullOrEmpty(solverExe) || !File.Exists(solverExe))
             {
-                throw new FileNotFoundException("Řešič cLBMnet.exe nebyl nalezen, nastavte cestu v Nastavení.");
+                throw new FileNotFoundException("The solver cLBMnet.exe was not found, set its path in Settings.");
             }
             this.simDir = simDir;
             // the solver appends the trailing separator itself

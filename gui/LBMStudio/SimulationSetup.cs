@@ -140,31 +140,31 @@ namespace LBMStudio
             d.MemoryGB = d.Cells * bytesPerCell / 1e9;
             if (d.Tau < 0.501 && s.Smagorinsky <= 0)
             {
-                d.Warnings.Add("τ = " + Fmt.G(d.Tau) + " je velmi blízko 0,5 – výpočet bude nestabilní. Zapněte LES (Smagorinsky ≈ 0,15), zmenšete rychlost mřížky nebo zjemněte síť.");
+                d.Warnings.Add("τ = " + Fmt.G(d.Tau) + " is very close to 0.5 – the computation will be unstable. Enable LES (Smagorinsky ≈ 0.15), lower the lattice velocity or refine the mesh.");
             }
             else if (d.Tau < 0.51)
             {
-                d.Warnings.Add("τ = " + Fmt.G(d.Tau) + " je malé, stabilitu zajišťuje LES model.");
+                d.Warnings.Add("τ = " + Fmt.G(d.Tau) + " is small, the LES model keeps it stable.");
             }
             if (d.Tau > 2)
             {
-                d.Warnings.Add("τ = " + Fmt.G(d.Tau) + " je velké – přesnost klesá, zvyšte rychlost mřížky nebo zjemněte síť.");
+                d.Warnings.Add("τ = " + Fmt.G(d.Tau) + " is large – accuracy drops, raise the lattice velocity or refine the mesh.");
             }
             if (ul > 0.15)
             {
-                d.Warnings.Add("Rychlost mřížky nad 0,15 – stlačitelné chyby (Ma = " + Fmt.G(d.Mach, 3) + ").");
+                d.Warnings.Add("Lattice velocity above 0.15 – compressibility errors (Ma = " + Fmt.G(d.Mach, 3) + ").");
             }
             if (s.ProblemId == 0 && g.Inlet.Enabled && !g.Outlet.Enabled)
             {
-                d.Warnings.Add("Jednofázový výpočet s vtokem potřebuje výtok, jinak tlak v uzavřené oblasti roste.");
+                d.Warnings.Add("A single phase computation with an inlet needs an outlet, otherwise the pressure in the closed region grows.");
             }
             if (s.ProblemId == 1 && s.Fill == FillMode.Empty && !g.Inlet.Enabled)
             {
-                d.Warnings.Add("Prázdná oblast bez vtoku – není co počítat.");
+                d.Warnings.Add("Empty region without an inlet – nothing to compute.");
             }
             if (d.MaxIter > 5000000)
             {
-                d.Warnings.Add("Počet iterací " + d.MaxIter + " je velmi vysoký.");
+                d.Warnings.Add("The number of iterations " + d.MaxIter + " is very high.");
             }
             return d;
         }
@@ -177,7 +177,7 @@ namespace LBMStudio
         {
             if (!g.MeshReady)
             {
-                throw new InvalidOperationException("Geometrie nemá vytvořenou síť.");
+                throw new InvalidOperationException("The geometry has no mesh.");
             }
             string dir = s.Dir(g, workspace);
             Directory.CreateDirectory(dir);
@@ -320,7 +320,7 @@ namespace LBMStudio
             byte[] types = g.LoadCellTypes(workspace);
             if (types == null)
             {
-                throw new InvalidOperationException("Chybí mesh/celltypes.bin, vytvořte síť znovu.");
+                throw new InvalidOperationException("mesh/celltypes.bin is missing, generate the mesh again.");
             }
             int GX = g.GX, GY = g.GY, GZ = g.GZ, bs = g.BlockSize;
             Func<int, int, int, long> idx = (i, j, k) => i + (long)GX * (j + (long)GY * k);

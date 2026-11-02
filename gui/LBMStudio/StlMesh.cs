@@ -91,13 +91,13 @@ namespace LBMStudio
                 }
                 if (list.Count == 0 || list.Count % 9 != 0)
                 {
-                    throw new InvalidDataException("Soubor " + path + " není platné STL.");
+                    throw new InvalidDataException("File " + path + " is not a valid STL.");
                 }
                 mesh.V = list.ToArray();
             }
             if (mesh.TriangleCount == 0)
             {
-                throw new InvalidDataException("STL neobsahuje žádné trojúhelníky.");
+                throw new InvalidDataException("The STL contains no triangles.");
             }
             mesh.UpdateBounds();
             return mesh;

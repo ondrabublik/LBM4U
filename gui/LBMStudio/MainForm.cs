@@ -29,16 +29,16 @@ namespace LBMStudio
         public MainForm(AppSettings settings)
         {
             this.settings = settings;
-            Text = "LBM Studio – lattice Boltzmann simulace proudění";
+            Text = "LBM Studio – lattice Boltzmann flow simulation";
             Width = 1500;
             Height = 950;
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9f);
 
             var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Padding = new Padding(6, 2, 6, 2) };
-            var btnSettings = new ToolStripButton("Nastavení…");
+            var btnSettings = new ToolStripButton("Settings…");
             btnSettings.Click += (s, e) => ShowSettings();
-            var btnOpenDir = new ToolStripButton("Otevřít pracovní složku");
+            var btnOpenDir = new ToolStripButton("Open workspace folder");
             btnOpenDir.Click += (s, e) => OpenFolder(settings.Workspace);
             lblWorkspace = new ToolStripLabel();
             tool.Items.Add(btnSettings);
@@ -47,15 +47,15 @@ namespace LBMStudio
             tool.Items.Add(lblWorkspace);
 
             status = new StatusStrip();
-            statusText = new ToolStripStatusLabel("Připraveno") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
+            statusText = new ToolStripStatusLabel("Ready") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
             status.Items.Add(statusText);
 
             var split = new SplitContainer { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel1, SplitterDistance = 220 };
             var leftPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(6) };
-            var lblG = new Label { Text = "Geometrie", Dock = DockStyle.Top, Height = 22, Font = new Font(Font, FontStyle.Bold) };
+            var lblG = new Label { Text = "Geometry", Dock = DockStyle.Top, Height = 22, Font = new Font(Font, FontStyle.Bold) };
             lbGeometries = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
             lbGeometries.SelectedIndexChanged += (s, e) => SelectGeometry(lbGeometries.SelectedItem as string);
-            var btnNewGeom = new Button { Text = "Nová geometrie…", Dock = DockStyle.Bottom, Height = 30 };
+            var btnNewGeom = new Button { Text = "New geometry…", Dock = DockStyle.Bottom, Height = 30 };
             btnNewGeom.Click += (s, e) => NewGeometry();
             leftPanel.Controls.Add(lbGeometries);
             leftPanel.Controls.Add(lblG);
@@ -84,7 +84,7 @@ namespace LBMStudio
             runner.Exited += code => BeginInvokeSafe(() => OnSolverExited(code));
             FormClosing += (s, e) =>
             {
-                if (runner.Running && MessageBox.Show(this, "Výpočet stále běží. Ukončit aplikaci a výpočet zastavit?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                if (runner.Running && MessageBox.Show(this, "The computation is still running. Quit the application and stop it?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
                 {
                     e.Cancel = true;
                     return;
@@ -127,7 +127,7 @@ namespace LBMStudio
         void RefreshGeometries(string select)
         {
             Directory.CreateDirectory(settings.Workspace);
-            lblWorkspace.Text = "Pracovní složka: " + settings.Workspace;
+            lblWorkspace.Text = "Workspace: " + settings.Workspace;
             var names = Directory.GetDirectories(settings.Workspace)
                 .Where(d => File.Exists(Path.Combine(d, "geometry.ini")))
                 .Select(Path.GetFileName).OrderBy(n => n).ToList();
@@ -150,19 +150,19 @@ namespace LBMStudio
 
         void NewGeometry()
         {
-            string name = Prompt("Nová geometrie", "Název geometrie (bez mezer a diakritiky):", "geometrie1");
+            string name = Prompt("New geometry", "Geometry name (no spaces or accents):", "geometry1");
             if (string.IsNullOrEmpty(name))
             {
                 return;
             }
             if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.Contains(" "))
             {
-                MessageBox.Show(this, "Neplatný název.", Text);
+                MessageBox.Show(this, "Invalid name.", Text);
                 return;
             }
             if (Directory.Exists(Path.Combine(settings.Workspace, name)))
             {
-                MessageBox.Show(this, "Geometrie s tímto názvem už existuje.", Text);
+                MessageBox.Show(this, "A geometry with this name already exists.", Text);
                 return;
             }
             var g = new GeometryDef { Name = name };
@@ -188,12 +188,12 @@ namespace LBMStudio
                 }
                 catch (Exception ex)
                 {
-                    LogGeom("Chyba čtení geometrie: " + ex.Message);
+                    LogGeom("Error reading the geometry: " + ex.Message);
                 }
             }
             LoadGeometryToUi();
             RefreshSimulationList(null);
-            SetStatus("Geometrie " + name + (geom.MeshReady ? " – síť: " + geom.BlockCount + " bloků, " + geom.FluidCells + " buněk tekutiny" : " – bez sítě"));
+            SetStatus("Geometry " + name + (geom.MeshReady ? " – mesh: " + geom.BlockCount + " blocks, " + geom.FluidCells + " fluid cells" : " – no mesh"));
         }
 
         // ---------------------------------------------------------------- dialogs
@@ -205,7 +205,7 @@ namespace LBMStudio
                 var l = new Label { Text = text, Left = 12, Top = 12, Width = 380 };
                 var t = new TextBox { Text = value, Left = 12, Top = 36, Width = 380 };
                 var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Left = 236, Top = 72, Width = 75 };
-                var cancel = new Button { Text = "Zrušit", DialogResult = DialogResult.Cancel, Left = 317, Top = 72, Width = 75 };
+                var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 317, Top = 72, Width = 75 };
                 f.Controls.AddRange(new Control[] { l, t, ok, cancel });
                 f.AcceptButton = ok;
                 f.CancelButton = cancel;
@@ -215,7 +215,7 @@ namespace LBMStudio
 
         void ShowSettings()
         {
-            using (var f = new Form { Text = "Nastavení", Width = 720, Height = 300, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false })
+            using (var f = new Form { Text = "Settings", Width = 720, Height = 300, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false })
             {
                 var table = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, Height = 200, Padding = new Padding(8) };
                 table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
@@ -240,7 +240,7 @@ namespace LBMStudio
                         }
                         else
                         {
-                            using (var d = new OpenFileDialog { Filter = "Programy (*.exe)|*.exe" })
+                            using (var d = new OpenFileDialog { Filter = "Programs (*.exe)|*.exe" })
                             {
                                 if (d.ShowDialog() == DialogResult.OK)
                                 {
@@ -254,14 +254,14 @@ namespace LBMStudio
                     table.Controls.Add(b);
                     return tb;
                 };
-                var tWork = add("Pracovní složka", settings.Workspace, true);
-                var tSolver = add("Řešič cLBMnet.exe", settings.SolverExe, false);
+                var tWork = add("Workspace folder", settings.Workspace, true);
+                var tSolver = add("Solver cLBMnet.exe", settings.SolverExe, false);
                 var tGmsh = add("gmsh.exe (STEP)", settings.GmshExe, false);
                 var tFc = add("FreeCADCmd.exe (STEP)", settings.FreeCadExe, false);
                 var tPv = add("paraview.exe", settings.ParaViewExe, false);
-                var info = new Label { Text = "Převod STEP: " + CadConverter.Describe(settings), Left = 12, Top = 205, Width = 500 };
-                var ok = new Button { Text = "Uložit", DialogResult = DialogResult.OK, Left = 520, Top = 225, Width = 80 };
-                var cancel = new Button { Text = "Zrušit", DialogResult = DialogResult.Cancel, Left = 610, Top = 225, Width = 80 };
+                var info = new Label { Text = "STEP conversion: " + CadConverter.Describe(settings), Left = 12, Top = 205, Width = 500 };
+                var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, Left = 520, Top = 225, Width = 80 };
+                var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 610, Top = 225, Width = 80 };
                 f.Controls.AddRange(new Control[] { table, info, ok, cancel });
                 f.AcceptButton = ok;
                 if (f.ShowDialog(this) == DialogResult.OK)

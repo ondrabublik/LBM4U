@@ -131,7 +131,7 @@ namespace LBMStudio
             {
                 if (new string(r.ReadChars(4)) != "LBMO" || r.ReadInt32() != 1)
                 {
-                    throw new InvalidDataException("Neplatný soubor " + path);
+                    throw new InvalidDataException("Invalid file " + path);
                 }
                 var o = new OctreeMesh { BlockSize = r.ReadInt32(), NBi = r.ReadInt32(), NBj = r.ReadInt32(), NBk = r.ReadInt32() };
                 int n = r.ReadInt32();
@@ -420,7 +420,7 @@ namespace LBMStudio
                 });
                 if (spec.GapCells > 0)
                 {
-                    log("Zahušťování: " + rays + " paprsků přes mezery");
+                    log("Refinement: " + rays + " rays across gaps");
                 }
             }
 
@@ -511,7 +511,7 @@ namespace LBMStudio
             }
             if (tree.Blocks.Count == 0)
             {
-                throw new InvalidOperationException("Síť neobsahuje žádnou buňku tekutiny. Zkontrolujte jednotky, velikost buňky a uzavřenost geometrie.");
+                throw new InvalidOperationException("The mesh contains no fluid cell. Check the units, the cell size and that the geometry is closed.");
             }
             // block grid of the level 0 cropped to the used blocks (the solver derives it from the largest indexes)
             tree.NBi = tree.Blocks.Max(b => (b.Bi >> b.Level) + 1);
@@ -575,7 +575,7 @@ namespace LBMStudio
                             }
                 }
             }
-            log("Zahušťování: " + marked + " zakřivených hran");
+            log("Refinement: " + marked + " curved edges");
         }
 
         static Vec3 Centroid(StlMesh mesh, int t)

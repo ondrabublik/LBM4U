@@ -52,7 +52,7 @@ namespace LBMStudio
                 var magic = Encoding.ASCII.GetString(r.ReadBytes(4));
                 if (magic != "LBMF")
                 {
-                    throw new InvalidDataException("Neplatný soubor výsledků " + path);
+                    throw new InvalidDataException("Invalid result file " + path);
                 }
                 int version = r.ReadInt32();
                 var d = new FieldsData
@@ -119,7 +119,7 @@ namespace LBMStudio
                         }
                         if (read != buf.Length)
                         {
-                            throw new EndOfStreamException("Neúplný soubor " + path);
+                            throw new EndOfStreamException("Incomplete file " + path);
                         }
                         Buffer.BlockCopy(buf, 0, vals, 0, buf.Length);
                         if (down > 0 && maxVal[f] == null)

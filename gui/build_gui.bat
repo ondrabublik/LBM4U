@@ -2,6 +2,7 @@
 rem Builds LBMStudio.exe (.NET Framework 4.8) with the C# compiler of Visual Studio 2022.
 rem With the .NET SDK installed you can use "dotnet build LBMStudio\LBMStudio.csproj" instead.
 setlocal
+cd /d "%~dp0"
 set CSC=C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\Roslyn\csc.exe
 if not exist "%CSC%" set CSC=C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\Roslyn\csc.exe
 if not exist "%CSC%" set CSC=C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\Roslyn\csc.exe

@@ -27,43 +27,43 @@ namespace LBMStudio
         // name, density, kinematic viscosity, surface tension
         static readonly object[][] FluidPresets =
         {
-            new object[] { "Voda 20 °C", 998.0, 1.004e-6, 0.0728 },
-            new object[] { "Hliník (tavenina 700 °C)", 2375.0, 5.4e-7, 0.87 },
-            new object[] { "Litina (tavenina)", 7000.0, 8.0e-7, 1.5 },
-            new object[] { "Motorový olej", 880.0, 1.0e-4, 0.031 },
-            new object[] { "Glycerin", 1261.0, 1.18e-3, 0.063 },
-            new object[] { "Vzduch (jednofázově)", 1.2, 1.5e-5, 0.0 },
-            new object[] { "Vlastní", 1000.0, 1e-6, 0.0 }
+            new object[] { "Water 20 °C", 998.0, 1.004e-6, 0.0728 },
+            new object[] { "Aluminium (melt 700 °C)", 2375.0, 5.4e-7, 0.87 },
+            new object[] { "Cast iron (melt)", 7000.0, 8.0e-7, 1.5 },
+            new object[] { "Engine oil", 880.0, 1.0e-4, 0.031 },
+            new object[] { "Glycerol", 1261.0, 1.18e-3, 0.063 },
+            new object[] { "Air (single phase)", 1.2, 1.5e-5, 0.0 },
+            new object[] { "Custom", 1000.0, 1e-6, 0.0 }
         };
 
         TabPage BuildSimulationTab()
         {
-            var page = new TabPage("2. Simulace");
+            var page = new TabPage("2. Simulation");
 
             var listPanel = new Panel { Dock = DockStyle.Left, Width = 190, Padding = new Padding(6) };
             lbSims = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
             lbSims.SelectedIndexChanged += (s, e) => LoadSimulationToUi(lbSims.SelectedItem as string);
-            var btnNew = new Button { Text = "Nová simulace", Dock = DockStyle.Bottom, Height = 28 };
+            var btnNew = new Button { Text = "New simulation", Dock = DockStyle.Bottom, Height = 28 };
             btnNew.Click += (s, e) => NewSimulation(false);
-            var btnCopy = new Button { Text = "Kopírovat vybranou", Dock = DockStyle.Bottom, Height = 28 };
+            var btnCopy = new Button { Text = "Copy selected", Dock = DockStyle.Bottom, Height = 28 };
             btnCopy.Click += (s, e) => NewSimulation(true);
             listPanel.Controls.Add(lbSims);
-            listPanel.Controls.Add(new Label { Text = "Simulace geometrie", Dock = DockStyle.Top, Height = 20, Font = new Font(Font, FontStyle.Bold) });
+            listPanel.Controls.Add(new Label { Text = "Simulations", Dock = DockStyle.Top, Height = 20, Font = new Font(Font, FontStyle.Bold) });
             listPanel.Controls.Add(btnNew);
             listPanel.Controls.Add(btnCopy);
 
             var tBase = FieldTable();
-            tbSimName = AddRow(tBase, "Název", new TextBox());
-            cbProblem = AddRow(tBase, "Úloha", Combo("Volná hladina (plnění)", "Jednofázové proudění"));
+            tbSimName = AddRow(tBase, "Name", new TextBox());
+            cbProblem = AddRow(tBase, "Problem", Combo("Free surface (filling)", "Single phase flow"));
 
             var tFluid = FieldTable();
-            cbFluid = AddRow(tFluid, "Tekutina", Combo(FluidPresets.Select(p => (string)p[0]).ToArray()));
-            tbDensity = AddRow(tFluid, "Hustota", Num("998"), "kg/m³");
-            tbVisc = AddRow(tFluid, "Kinematická viskozita", Num("1.004e-6"), "m²/s");
-            tbSigma = AddRow(tFluid, "Povrchové napětí", Num("0.0728"), "N/m");
-            tbAngle = AddRow(tFluid, "Kontaktní úhel (0 = vyp.)", Num("0"), "°");
-            cbViscModel = AddRow(tFluid, "Reologie", Combo("Newtonská", "Power-law: ν = b0·γ̇^(b1−1)", "Bingham: ν = b0 + b1·γ̇^(b2−1)", "Cross: ν = b0 + (b1−b0)/(1+b2·γ̇^b3)", "Polynom: ν = b0 + b1·γ̇ + …"));
-            tbFluidParams = AddRow(tFluid, "Parametry b0, b1, …", new TextBox(), "SI");
+            cbFluid = AddRow(tFluid, "Fluid", Combo(FluidPresets.Select(p => (string)p[0]).ToArray()));
+            tbDensity = AddRow(tFluid, "Density", Num("998"), "kg/m³");
+            tbVisc = AddRow(tFluid, "Kinematic viscosity", Num("1.004e-6"), "m²/s");
+            tbSigma = AddRow(tFluid, "Surface tension", Num("0.0728"), "N/m");
+            tbAngle = AddRow(tFluid, "Contact angle (0 = off)", Num("0"), "°");
+            cbViscModel = AddRow(tFluid, "Rheology", Combo("Newtonian", "Power-law: ν = b0·γ̇^(b1−1)", "Bingham: ν = b0 + b1·γ̇^(b2−1)", "Cross: ν = b0 + (b1−b0)/(1+b2·γ̇^b3)", "Polynomial: ν = b0 + b1·γ̇ + …"));
+            tbFluidParams = AddRow(tFluid, "Parameters b0, b1, …", new TextBox(), "SI");
             cbFluid.SelectedIndexChanged += (s, e) =>
             {
                 if (loadingSim)
@@ -71,7 +71,7 @@ namespace LBMStudio
                     return;
                 }
                 var p = FluidPresets[cbFluid.SelectedIndex];
-                if ((string)p[0] != "Vlastní")
+                if ((string)p[0] != "Custom")
                 {
                     tbDensity.Text = Fmt.G((double)p[1], 6);
                     tbVisc.Text = Fmt.G((double)p[2], 6);
@@ -84,23 +84,23 @@ namespace LBMStudio
             tbSGx = AddRow(tLoad, "gx", Num("0"), "m/s²");
             tbSGy = AddRow(tLoad, "gy", Num("0"), "m/s²");
             tbSGz = AddRow(tLoad, "gz", Num("-9.81"), "m/s²");
-            tbSimInletVel = AddRow(tLoad, "Rychlost vtoku", Num("0.5"), "m/s");
-            tbSimOutletP = AddRow(tLoad, "Přetlak výtoku", Num("0"), "Pa");
-            cbFill = AddRow(tLoad, "Počáteční stav", Combo("Prázdná (plnění vtokem)", "Zcela zaplněná", "Hladina do výšky"));
-            tbFillLevel = AddRow(tLoad, "Výška hladiny", Num("0"), "m");
+            tbSimInletVel = AddRow(tLoad, "Inlet velocity", Num("0.5"), "m/s");
+            tbSimOutletP = AddRow(tLoad, "Outlet gauge pressure", Num("0"), "Pa");
+            cbFill = AddRow(tLoad, "Initial state", Combo("Empty (filled by the inlet)", "Completely filled", "Filled up to a level"));
+            tbFillLevel = AddRow(tLoad, "Fill level", Num("0"), "m");
 
             var tNum = FieldTable();
-            cbCollision = AddRow(tNum, "Kolizní model", Combo("MRT (doporučeno)", "TRT", "BGK"));
-            tbSmag = AddRow(tNum, "LES Smagorinsky C", Num("0.15"), "0 = laminární");
-            tbLatticeU = AddRow(tNum, "Rychlost mřížky", Num("0.1"), "≤ 0.15");
-            tbCharU = AddRow(tNum, "Charakter. rychlost", Num("0"), "m/s, 0 = auto");
-            tbTauMax = AddRow(tNum, "Max. τ (reologie)", Num("1.5"), "");
-            tbEndTime = AddRow(tNum, "Simulovaný čas", Num("1"), "s");
-            tbSaveInt = AddRow(tNum, "Interval ukládání", Num("0.05"), "s");
-            tbThreads = AddRow(tNum, "Počet vláken", Num(Environment.ProcessorCount.ToString()), "");
+            cbCollision = AddRow(tNum, "Collision model", Combo("MRT (recommended)", "TRT", "BGK"));
+            tbSmag = AddRow(tNum, "LES Smagorinsky C", Num("0.15"), "0 = laminar");
+            tbLatticeU = AddRow(tNum, "Lattice velocity", Num("0.1"), "≤ 0.15");
+            tbCharU = AddRow(tNum, "Character. velocity", Num("0"), "m/s, 0 = auto");
+            tbTauMax = AddRow(tNum, "Max. τ (rheology)", Num("1.5"), "");
+            tbEndTime = AddRow(tNum, "Simulated time", Num("1"), "s");
+            tbSaveInt = AddRow(tNum, "Save interval", Num("0.05"), "s");
+            tbThreads = AddRow(tNum, "Threads", Num(Environment.ProcessorCount.ToString()), "");
 
             lblDerived = new Label { AutoSize = true, MaximumSize = new Size(400, 0), Padding = new Padding(6), ForeColor = Color.FromArgb(40, 40, 40) };
-            var derivedBox = Group("Odvozené veličiny", lblDerived);
+            var derivedBox = Group("Derived quantities", lblDerived);
 
             foreach (var tb in new[] { tbDensity, tbVisc, tbSGx, tbSGy, tbSGz, tbSimInletVel, tbSmag, tbLatticeU, tbCharU, tbEndTime, tbSaveInt })
             {
@@ -112,31 +112,31 @@ namespace LBMStudio
             }
 
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 44, Padding = new Padding(2, 6, 2, 2) };
-            btnSaveSim = new Button { Text = "Uložit", Width = 90, Height = 30 };
+            btnSaveSim = new Button { Text = "Save", Width = 90, Height = 30 };
             btnSaveSim.Click += (s, e) => SaveSimulation();
-            btnRunSim = new Button { Text = "▶ Spustit", Width = 110, Height = 30, Font = new Font(Font, FontStyle.Bold) };
+            btnRunSim = new Button { Text = "▶ Run", Width = 110, Height = 30, Font = new Font(Font, FontStyle.Bold) };
             btnRunSim.Click += (s, e) => RunSimulation();
-            btnStopSim = new Button { Text = "■ Zastavit", Width = 100, Height = 30, Enabled = false };
+            btnStopSim = new Button { Text = "■ Stop", Width = 100, Height = 30, Enabled = false };
             btnStopSim.Click += (s, e) =>
             {
                 runner.RequestStop();
-                AppendSimLog("Požadavek na zastavení – řešič skončí při nejbližším ukládání a výsledky uloží.");
+                AppendSimLog("Stop requested – the solver ends at the next save and writes the results.");
             };
             buttons.Controls.AddRange(new Control[] { btnSaveSim, btnRunSim, btnStopSim });
 
             var column = Column(440,
-                Group("Simulace", tBase),
-                Group("Tekutina", tFluid),
-                Group("Zatížení a počáteční stav", tLoad),
-                Group("Numerika", tNum),
+                Group("Simulation", tBase),
+                Group("Fluid", tFluid),
+                Group("Loads and initial state", tLoad),
+                Group("Numerics", tNum),
                 derivedBox,
                 buttons);
 
             simChart = new Chart { Dock = DockStyle.Fill, BackColor = Color.White, MinimumSize = new Size(50, 50) };
             var area = new ChartArea("main");
-            area.AxisX.Title = "čas [s]";
-            area.AxisY.Title = "max. rychlost [m/s]";
-            area.AxisY2.Title = "hmotnost [kg]";
+            area.AxisX.Title = "time [s]";
+            area.AxisY.Title = "max. velocity [m/s]";
+            area.AxisY2.Title = "mass [kg]";
             area.AxisY2.Enabled = AxisEnabled.True;
             area.AxisX.MajorGrid.LineColor = Color.Gainsboro;
             area.AxisY.MajorGrid.LineColor = Color.Gainsboro;
@@ -148,8 +148,8 @@ namespace LBMStudio
             area.AxisY2.IsStartedFromZero = false;
             simChart.ChartAreas.Add(area);
             simChart.Legends.Add(new Legend { Docking = Docking.Top });
-            simChart.Series.Add(new Series("max. rychlost") { ChartType = SeriesChartType.Line, BorderWidth = 2, Color = Color.FromArgb(31, 119, 180) });
-            simChart.Series.Add(new Series("hmotnost") { ChartType = SeriesChartType.Line, BorderWidth = 2, Color = Color.FromArgb(214, 39, 40), YAxisType = AxisType.Secondary });
+            simChart.Series.Add(new Series("max. velocity") { ChartType = SeriesChartType.Line, BorderWidth = 2, Color = Color.FromArgb(31, 119, 180) });
+            simChart.Series.Add(new Series("mass") { ChartType = SeriesChartType.Line, BorderWidth = 2, Color = Color.FromArgb(214, 39, 40), YAxisType = AxisType.Secondary });
 
             simProgress = new ProgressBar { Dock = DockStyle.Top, Height = 18 };
             simLog = new TextBox { Dock = DockStyle.Bottom, Height = 220, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 8.5f), WordWrap = false };
@@ -226,14 +226,14 @@ namespace LBMStudio
             {
                 n++;
             }
-            string name = Prompt("Nová simulace", "Název simulace:", "sim" + n);
+            string name = Prompt("New simulation", "Simulation name:", "sim" + n);
             if (string.IsNullOrEmpty(name))
             {
                 return;
             }
             if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.Contains(" ") || name == "mesh")
             {
-                MessageBox.Show(this, "Neplatný název.", Text);
+                MessageBox.Show(this, "Invalid name.", Text);
                 return;
             }
             SimulationDef s;
@@ -314,33 +314,33 @@ namespace LBMStudio
             {
                 Name = tbSimName.Text.Trim(),
                 ProblemId = cbProblem.SelectedIndex == 1 ? 0 : 1,
-                Density = D(tbDensity, "Hustota"),
-                Viscosity = D(tbVisc, "Viskozita"),
-                SurfaceTension = D(tbSigma, "Povrchové napětí"),
-                ContactAngle = D(tbAngle, "Kontaktní úhel"),
+                Density = D(tbDensity, "Density"),
+                Viscosity = D(tbVisc, "Viscosity"),
+                SurfaceTension = D(tbSigma, "Surface tension"),
+                ContactAngle = D(tbAngle, "Contact angle"),
                 ViscosityModel = cbViscModel.SelectedIndex,
                 FluidParameters = tbFluidParams.Text.Trim(),
                 Gravity = new Vec3(D(tbSGx, "gx"), D(tbSGy, "gy"), D(tbSGz, "gz")),
-                InletVelocity = D(tbSimInletVel, "Rychlost vtoku"),
-                OutletPressure = D(tbSimOutletP, "Přetlak výtoku"),
+                InletVelocity = D(tbSimInletVel, "Inlet velocity"),
+                OutletPressure = D(tbSimOutletP, "Outlet gauge pressure"),
                 Fill = (FillMode)cbFill.SelectedIndex,
-                FillLevel = D(tbFillLevel, "Výška hladiny"),
+                FillLevel = D(tbFillLevel, "Fill level"),
                 CollisionModel = cbCollision.SelectedIndex == 0 ? 1 : (cbCollision.SelectedIndex == 1 ? 2 : 0),
                 Smagorinsky = D(tbSmag, "Smagorinsky"),
-                LatticeVelocity = D(tbLatticeU, "Rychlost mřížky"),
-                CharVelocity = D(tbCharU, "Charakteristická rychlost"),
+                LatticeVelocity = D(tbLatticeU, "Lattice velocity"),
+                CharVelocity = D(tbCharU, "Characteristic velocity"),
                 TauMax = D(tbTauMax, "Max. tau"),
-                EndTime = D(tbEndTime, "Simulovaný čas"),
-                SaveInterval = D(tbSaveInt, "Interval ukládání"),
-                Threads = (int)D(tbThreads, "Počet vláken")
+                EndTime = D(tbEndTime, "Simulated time"),
+                SaveInterval = D(tbSaveInt, "Save interval"),
+                Threads = (int)D(tbThreads, "Threads")
             };
             if (s.Viscosity <= 0 || s.Density <= 0 || s.EndTime <= 0 || s.SaveInterval <= 0 || s.LatticeVelocity <= 0)
             {
-                throw new FormatException("Hustota, viskozita, časy a rychlost mřížky musí být kladné.");
+                throw new FormatException("Density, viscosity, times and lattice velocity must be positive.");
             }
             if (s.ViscosityModel > 0 && s.FluidParameters.Length == 0)
             {
-                throw new FormatException("Zadejte parametry reologického modelu.");
+                throw new FormatException("Enter the parameters of the rheology model.");
             }
             return s;
         }
@@ -353,7 +353,7 @@ namespace LBMStudio
             }
             if (!geom.MeshReady)
             {
-                lblDerived.Text = "Geometrie nemá vytvořenou síť (záložka 1).";
+                lblDerived.Text = "The geometry has no mesh (tab 1).";
                 return;
             }
             try
@@ -361,7 +361,7 @@ namespace LBMStudio
                 var s = SimulationFromUi();
                 var d = Derived.Compute(geom, s);
                 string text = string.Format(
-                    "Časový krok dt = {0} s\nτ = {1} (ν mřížky = {2})\nPočet iterací: {3:N0}, ukládání každých {4:N0}\nCharakteristická rychlost {5} m/s, Ma = {6}\nBuněk: {7:N0}, paměť ≈ {8} GB",
+                    "Time step dt = {0} s\nτ = {1} (lattice ν = {2})\nIterations: {3:N0}, saved every {4:N0}\nCharacteristic velocity {5} m/s, Ma = {6}\nCells: {7:N0}, memory ≈ {8} GB",
                     Fmt.G(d.Dt, 4), Fmt.G(d.Tau, 5), Fmt.G((d.Tau - 0.5) / 3, 3), d.MaxIter, d.SaveRate, Fmt.G(d.Uc, 3), Fmt.G(d.Mach, 3), d.Cells, Fmt.G(d.MemoryGB, 3));
                 if (d.Warnings.Count > 0)
                 {
@@ -388,11 +388,11 @@ namespace LBMStudio
                 var s = SimulationFromUi();
                 if (string.IsNullOrEmpty(s.Name) || s.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || s.Name.Contains(" "))
                 {
-                    throw new FormatException("Neplatný název simulace.");
+                    throw new FormatException("Invalid simulation name.");
                 }
                 SimulationWriter.Write(geom, s, settings.Workspace);
                 RefreshSimulationList(s.Name);
-                SetStatus("Simulace " + s.Name + " uložena.");
+                SetStatus("Simulation " + s.Name + " saved.");
                 return s;
             }
             catch (Exception ex)
@@ -406,7 +406,7 @@ namespace LBMStudio
         {
             if (runner.Running)
             {
-                MessageBox.Show(this, "Už běží výpočet simulace " + runningSimName + ".", Text);
+                MessageBox.Show(this, "A computation is already running for simulation " + runningSimName + ".", Text);
                 return;
             }
             var s = SaveSimulation();
@@ -416,7 +416,7 @@ namespace LBMStudio
             }
             var d = Derived.Compute(geom, s);
             if (d.Tau < 0.501 && s.Smagorinsky <= 0 &&
-                MessageBox.Show(this, "Relaxační čas τ je velmi blízko 0,5 a výpočet bude pravděpodobně nestabilní. Přesto spustit?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                MessageBox.Show(this, "The relaxation time τ is very close to 0.5 and the computation will probably be unstable. Run anyway?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             {
                 return;
             }
@@ -424,7 +424,7 @@ namespace LBMStudio
             string resultDir = Path.Combine(simDir, "result");
             if (Directory.Exists(resultDir) && Directory.GetFiles(resultDir).Length > 0)
             {
-                if (MessageBox.Show(this, "Simulace už má výsledky, nový výpočet je přepíše. Pokračovat?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                if (MessageBox.Show(this, "The simulation already has results, a new run overwrites them. Continue?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
                 {
                     return;
                 }
@@ -446,7 +446,7 @@ namespace LBMStudio
                 runner.Start(settings.SolverExe, geom.Dir(settings.Workspace), simDir);
                 btnRunSim.Enabled = false;
                 btnStopSim.Enabled = true;
-                SetStatus("Běží simulace " + geom.Name + "/" + s.Name + " …");
+                SetStatus("Running simulation " + geom.Name + "/" + s.Name + " …");
             }
             catch (Exception ex)
             {
@@ -472,14 +472,14 @@ namespace LBMStudio
             {
                 simChart.Series[1].Points.AddXY(p.Time, p.Mass);
             }
-            SetStatus(string.Format("Simulace {0}: iterace {1:N0} / {2:N0}, t = {3} s, {4} MLUPS", runningSimName, p.Iteration, runningMaxIter, Fmt.G(p.Time, 4), Fmt.G(p.Mlups, 3)));
+            SetStatus(string.Format("Simulation {0}: iteration {1:N0} / {2:N0}, t = {3} s, {4} MLUPS", runningSimName, p.Iteration, runningMaxIter, Fmt.G(p.Time, 4), Fmt.G(p.Mlups, 3)));
         }
 
         void OnSolverExited(int code)
         {
             btnRunSim.Enabled = true;
             btnStopSim.Enabled = false;
-            string msg = code == 0 ? "Výpočet " + runningSimName + " dokončen." : (code == 3 ? "Výpočet " + runningSimName + " divergoval (NaN) – zmenšete rychlost mřížky, zapněte LES nebo zjemněte síť." : "Výpočet " + runningSimName + " skončil s chybou (kód " + code + ").");
+            string msg = code == 0 ? "Computation " + runningSimName + " finished." : (code == 3 ? "Computation " + runningSimName + " diverged (NaN) – lower the lattice velocity, enable LES or refine the mesh." : "Computation " + runningSimName + " failed (code " + code + ").");
             AppendSimLog(msg);
             SetStatus(msg);
             if (code == 0)

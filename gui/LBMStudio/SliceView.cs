@@ -132,7 +132,7 @@ namespace LBMStudio
             g.Clear(BackColor);
             if (image == null)
             {
-                TextRenderer.DrawText(g, "Žádná data", Font, ClientRectangle, Color.Gray, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, "No data", Font, ClientRectangle, Color.Gray, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 return;
             }
             int legendW = 80, margin = 40;
@@ -234,7 +234,7 @@ namespace LBMStudio
             {
                 return;
             }
-            string text = float.IsNaN(values[a, b]) ? "stěna" : Fmt.G(values[a, b], 5) + " " + unit;
+            string text = float.IsNaN(values[a, b]) ? "wall" : Fmt.G(values[a, b], 5) + " " + unit;
             text = axisA + " = " + Fmt.G((a + 0.5) * extentA / na, 4) + " m, " + axisB + " = " + Fmt.G((b + 0.5) * extentB / nb, 4) + " m: " + text;
             if (text != lastTip)
             {

@@ -35,52 +35,52 @@ namespace LBMStudio
         bool updatingMeshCut;
 
         static readonly string[] FaceNames = { "x min", "x max", "y min", "y max", "z min", "z max" };
-        static readonly string[] UnitNames = { "mm", "m", "cm", "palce" };
+        static readonly string[] UnitNames = { "mm", "m", "cm", "inches" };
         static readonly double[] UnitScales = { 0.001, 1, 0.01, 0.0254 };
 
         TabPage BuildGeometryTab()
         {
-            var page = new TabPage("1. Geometrie a síť");
+            var page = new TabPage("1. Geometry and mesh");
 
             // CAD
             var tCad = FieldTable();
             tbSource = new TextBox { ReadOnly = true };
-            var btnBrowse = new Button { Text = "Načíst STEP / STL…", Height = 28 };
+            var btnBrowse = new Button { Text = "Load STEP / STL…", Height = 28 };
             btnBrowse.Click += (s, e) => BrowseGeometry();
             cbUnits = Combo(UnitNames);
             cbUnits.SelectedIndexChanged += (s, e) => { if (!loadingGeometry) ApplyUnits(); };
             tCad.Controls.Add(btnBrowse);
             tCad.SetColumnSpan(btnBrowse, 3);
             btnBrowse.Dock = DockStyle.Fill;
-            AddRow(tCad, "Soubor", tbSource);
-            AddRow(tCad, "Jednotky souboru", cbUnits);
+            AddRow(tCad, "File", tbSource);
+            AddRow(tCad, "File units", cbUnits);
             lblGeomInfo = new Label { AutoSize = true, ForeColor = Color.DimGray, MaximumSize = new Size(390, 0) };
             tCad.Controls.Add(lblGeomInfo);
             tCad.SetColumnSpan(lblGeomInfo, 3);
 
             // fluid region
             var tReg = FieldTable();
-            rbInside = new RadioButton { Text = "Tekutina uvnitř tělesa (dutina, forma)", AutoSize = true, Checked = true };
-            rbOutside = new RadioButton { Text = "Těleso obtékané tekutinou (kvádr kolem)", AutoSize = true };
+            rbInside = new RadioButton { Text = "Fluid inside the body (cavity, mold)", AutoSize = true, Checked = true };
+            rbOutside = new RadioButton { Text = "Flow around the body (box around it)", AutoSize = true };
             tReg.Controls.Add(rbInside);
             tReg.SetColumnSpan(rbInside, 3);
             tReg.Controls.Add(rbOutside);
             tReg.SetColumnSpan(rbOutside, 3);
-            tbMargin = AddRow(tReg, "Okraj kolem tělesa", Num("0.02"), "m");
+            tbMargin = AddRow(tReg, "Margin around the body", Num("0.02"), "m");
             rbOutside.CheckedChanged += (s, e) => { tbMargin.Enabled = rbOutside.Checked; UpdateGeometryPreview(); };
             tbMargin.Enabled = false;
 
             // mesh
             var tMesh = FieldTable();
-            tbDx = AddRow(tMesh, "Velikost buňky dx", Num("0.002"), "m");
-            cbBlock = AddRow(tMesh, "Velikost bloku", Combo("16", "8", "32"), "buněk");
-            chkRefine = new CheckBox { Text = "Zahušťování podle geometrie (octree)", AutoSize = true };
+            tbDx = AddRow(tMesh, "Cell size dx", Num("0.002"), "m");
+            cbBlock = AddRow(tMesh, "Block size", Combo("16", "8", "32"), "cells");
+            chkRefine = new CheckBox { Text = "Refinement by geometry (octree)", AutoSize = true };
             tMesh.Controls.Add(chkRefine);
             tMesh.SetColumnSpan(chkRefine, 3);
-            cbMaxLevel = AddRow(tMesh, "Nejvyšší úroveň zjemnění", Combo("1", "2", "3", "4"), "dx / 2^L");
-            tbGapCells = AddRow(tMesh, "Buněk přes nejužší mezeru", Num("10"));
-            tbCurvCells = AddRow(tMesh, "Buněk na poloměr zakřivení", Num("0"), "0 = vyp.");
-            cbWallLevel = AddRow(tMesh, "Úroveň u všech stěn", Combo("0", "1", "2", "3", "4"));
+            cbMaxLevel = AddRow(tMesh, "Max. refinement level", Combo("1", "2", "3", "4"), "dx / 2^L");
+            tbGapCells = AddRow(tMesh, "Cells across a gap", Num("10"));
+            tbCurvCells = AddRow(tMesh, "Cells per curvature radius", Num("0"), "0 = off");
+            cbWallLevel = AddRow(tMesh, "Level at all walls", Combo("0", "1", "2", "3", "4"));
             cbMaxLevel.SelectedIndex = 1;
             cbWallLevel.SelectedIndex = 0;
             chkRefine.CheckedChanged += (s, e) => { UpdateRefineControls(); UpdateGeometryPreview(); };
@@ -94,15 +94,15 @@ namespace LBMStudio
 
             // inlet
             var tIn = FieldTable();
-            chkInlet = new CheckBox { Text = "Vtok (rychlostní)", AutoSize = true, Checked = true };
+            chkInlet = new CheckBox { Text = "Inlet (velocity)", AutoSize = true, Checked = true };
             tIn.Controls.Add(chkInlet);
             tIn.SetColumnSpan(chkInlet, 3);
-            cbInletFace = AddRow(tIn, "Stěna kvádru", Combo(FaceNames));
-            tbInletU = AddRow(tIn, "Střed – souřadnice 1", Num("0"), "m");
-            tbInletV = AddRow(tIn, "Střed – souřadnice 2", Num("0"), "m");
-            tbInletR = AddRow(tIn, "Poloměr (0 = celá stěna)", Num("0"), "m");
-            tbInletVel = AddRow(tIn, "Rychlost (výchozí)", Num("0.5"), "m/s");
-            var btnCenterIn = new Button { Text = "Střed na stěnu", AutoSize = true };
+            cbInletFace = AddRow(tIn, "Box face", Combo(FaceNames));
+            tbInletU = AddRow(tIn, "Center – coordinate 1", Num("0"), "m");
+            tbInletV = AddRow(tIn, "Center – coordinate 2", Num("0"), "m");
+            tbInletR = AddRow(tIn, "Radius (0 = whole face)", Num("0"), "m");
+            tbInletVel = AddRow(tIn, "Velocity (default)", Num("0.5"), "m/s");
+            var btnCenterIn = new Button { Text = "Center on face", AutoSize = true };
             btnCenterIn.Click += (s, e) => CenterPort(cbInletFace, tbInletU, tbInletV);
             tIn.Controls.Add(btnCenterIn);
             tIn.SetColumnSpan(btnCenterIn, 3);
@@ -110,15 +110,15 @@ namespace LBMStudio
 
             // outlet
             var tOut = FieldTable();
-            chkOutlet = new CheckBox { Text = "Výtok (tlakový)", AutoSize = true };
+            chkOutlet = new CheckBox { Text = "Outlet (pressure)", AutoSize = true };
             tOut.Controls.Add(chkOutlet);
             tOut.SetColumnSpan(chkOutlet, 3);
-            cbOutletFace = AddRow(tOut, "Stěna kvádru", Combo(FaceNames));
-            tbOutletU = AddRow(tOut, "Střed – souřadnice 1", Num("0"), "m");
-            tbOutletV = AddRow(tOut, "Střed – souřadnice 2", Num("0"), "m");
-            tbOutletR = AddRow(tOut, "Poloměr (0 = celá stěna)", Num("0"), "m");
-            tbOutletP = AddRow(tOut, "Přetlak (výchozí)", Num("0"), "Pa");
-            var btnCenterOut = new Button { Text = "Střed na stěnu", AutoSize = true };
+            cbOutletFace = AddRow(tOut, "Box face", Combo(FaceNames));
+            tbOutletU = AddRow(tOut, "Center – coordinate 1", Num("0"), "m");
+            tbOutletV = AddRow(tOut, "Center – coordinate 2", Num("0"), "m");
+            tbOutletR = AddRow(tOut, "Radius (0 = whole face)", Num("0"), "m");
+            tbOutletP = AddRow(tOut, "Gauge pressure (default)", Num("0"), "Pa");
+            var btnCenterOut = new Button { Text = "Center on face", AutoSize = true };
             btnCenterOut.Click += (s, e) => CenterPort(cbOutletFace, tbOutletU, tbOutletV);
             tOut.Controls.Add(btnCenterOut);
             tOut.SetColumnSpan(btnCenterOut, 3);
@@ -142,33 +142,33 @@ namespace LBMStudio
                 t.TextChanged += (s, e) => UpdateGeometryPreview();
             }
 
-            btnGenerate = new Button { Text = "Vytvořit výpočetní síť", Dock = DockStyle.Top, Height = 38, Font = new Font(Font, FontStyle.Bold) };
+            btnGenerate = new Button { Text = "Generate mesh", Dock = DockStyle.Top, Height = 38, Font = new Font(Font, FontStyle.Bold) };
             btnGenerate.Click += (s, e) => GenerateMesh();
 
             var column = Column(430,
                 Group("CAD model", tCad),
-                Group("Oblast tekutiny", tReg),
-                Group("Síť", tMesh),
-                Group("Vtok", tIn),
-                Group("Výtok", tOut),
-                Group("Gravitace (výchozí pro simulace)", tG),
+                Group("Fluid region", tReg),
+                Group("Mesh", tMesh),
+                Group("Inlet", tIn),
+                Group("Outlet", tOut),
+                Group("Gravity (default for simulations)", tG),
                 btnGenerate);
 
             geomView = new Viewer3D { Dock = DockStyle.Fill };
             geomLog = new TextBox { Dock = DockStyle.Bottom, Height = 120, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 8.5f) };
-            var hint = new Label { Dock = DockStyle.Top, Height = 20, ForeColor = Color.DimGray, Text = "  Levé tlačítko – otáčení, pravé – posun, kolečko – zoom. Červená = vtok, zelená = výtok, modrá šipka = gravitace, modré buňky = tekutina." };
+            var hint = new Label { Dock = DockStyle.Top, Height = 20, ForeColor = Color.DimGray, Text = "  Left button – rotate, right – pan, wheel – zoom. Red = inlet, green = outlet, blue arrow = gravity, blue cells = fluid." };
 
             // display of the solver mesh
             var meshBar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4, 2, 4, 0), WrapContents = true };
             chkShowModel = new CheckBox { Text = "CAD model", AutoSize = true, Checked = true, Margin = new Padding(3, 6, 8, 0) };
-            chkShowCells = new CheckBox { Text = "Buňky sítě", AutoSize = true, Margin = new Padding(3, 6, 8, 0), Enabled = false };
-            chkShowBlocks = new CheckBox { Text = "Bloky", AutoSize = true, Margin = new Padding(3, 6, 8, 0), Enabled = false };
-            cbMeshCut = Combo("bez řezu", "řez kolmý na x", "řez kolmý na y", "řez kolmý na z");
+            chkShowCells = new CheckBox { Text = "Mesh cells", AutoSize = true, Margin = new Padding(3, 6, 8, 0), Enabled = false };
+            chkShowBlocks = new CheckBox { Text = "Blocks", AutoSize = true, Margin = new Padding(3, 6, 8, 0), Enabled = false };
+            cbMeshCut = Combo("no cut", "cut normal to x", "cut normal to y", "cut normal to z");
             cbMeshCut.Width = 120;
             cbMeshCut.Enabled = false;
             tbMeshCut = new TrackBar { Width = 200, Minimum = 0, Maximum = 0, TickStyle = TickStyle.None, Height = 30, Enabled = false };
             lblMeshCut = new Label { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(3, 6, 3, 0) };
-            chkMeshCutFlip = new CheckBox { Text = "obrátit", AutoSize = true, Margin = new Padding(3, 6, 8, 0), Enabled = false };
+            chkMeshCutFlip = new CheckBox { Text = "flip", AutoSize = true, Margin = new Padding(3, 6, 8, 0), Enabled = false };
             chkMeshCutFlip.CheckedChanged += (s, e) => { cellsModel = null; UpdateMeshLayers(); };
             chkShowModel.CheckedChanged += (s, e) => UpdateGeometryPreview();
             chkShowCells.CheckedChanged += (s, e) =>
@@ -189,7 +189,7 @@ namespace LBMStudio
                     UpdateMeshLayers();
                 }
             };
-            meshBar.Controls.AddRange(new Control[] { new Label { Text = "Zobrazit:", AutoSize = true, Margin = new Padding(3, 6, 3, 0) }, chkShowModel, chkShowCells, chkShowBlocks, cbMeshCut, tbMeshCut, chkMeshCutFlip, lblMeshCut });
+            meshBar.Controls.AddRange(new Control[] { new Label { Text = "Show:", AutoSize = true, Margin = new Padding(3, 6, 3, 0) }, chkShowModel, chkShowCells, chkShowBlocks, cbMeshCut, tbMeshCut, chkMeshCutFlip, lblMeshCut });
 
             var right = new Panel { Dock = DockStyle.Fill, Size = new Size(900, 800) };
             right.Controls.Add(geomView);
@@ -261,24 +261,24 @@ namespace LBMStudio
         {
             geom.UnitScale = UnitScales[Math.Max(0, cbUnits.SelectedIndex)];
             geom.Region = rbOutside.Checked ? FluidRegion.OutsideBody : FluidRegion.InsideBody;
-            geom.Margin = D(tbMargin, "Okraj");
-            geom.Dx = D(tbDx, "Velikost buňky");
+            geom.Margin = D(tbMargin, "Margin");
+            geom.Dx = D(tbDx, "Cell size");
             geom.BlockSize = int.Parse((string)cbBlock.SelectedItem);
             geom.Refine = chkRefine.Checked;
             geom.MaxLevel = cbMaxLevel.SelectedIndex + 1;
-            geom.GapCells = D(tbGapCells, "Buněk přes mezeru");
-            geom.CurvatureCells = D(tbCurvCells, "Buněk na poloměr zakřivení");
+            geom.GapCells = D(tbGapCells, "Cells across a gap");
+            geom.CurvatureCells = D(tbCurvCells, "Cells per curvature radius");
             geom.WallLevel = cbWallLevel.SelectedIndex;
             if (geom.Refine && geom.GapCells <= 0 && geom.CurvatureCells <= 0 && geom.WallLevel == 0)
             {
-                throw new FormatException("Zahušťování nemá žádné kritérium – zadejte počet buněk přes mezeru, na poloměr zakřivení nebo úroveň u stěn.");
+                throw new FormatException("Refinement has no criterion – set the cells across a gap, the cells per curvature radius or the level at walls.");
             }
-            geom.Inlet = new PortSpec { Enabled = chkInlet.Checked, Face = (Face)cbInletFace.SelectedIndex, U = D(tbInletU, "Vtok – souřadnice 1"), V = D(tbInletV, "Vtok – souřadnice 2"), Radius = D(tbInletR, "Vtok – poloměr"), Value = D(tbInletVel, "Vtok – rychlost") };
-            geom.Outlet = new PortSpec { Enabled = chkOutlet.Checked, Face = (Face)cbOutletFace.SelectedIndex, U = D(tbOutletU, "Výtok – souřadnice 1"), V = D(tbOutletV, "Výtok – souřadnice 2"), Radius = D(tbOutletR, "Výtok – poloměr"), Value = D(tbOutletP, "Výtok – tlak") };
+            geom.Inlet = new PortSpec { Enabled = chkInlet.Checked, Face = (Face)cbInletFace.SelectedIndex, U = D(tbInletU, "Inlet – coordinate 1"), V = D(tbInletV, "Inlet – coordinate 2"), Radius = D(tbInletR, "Inlet – radius"), Value = D(tbInletVel, "Inlet – velocity") };
+            geom.Outlet = new PortSpec { Enabled = chkOutlet.Checked, Face = (Face)cbOutletFace.SelectedIndex, U = D(tbOutletU, "Outlet – coordinate 1"), V = D(tbOutletV, "Outlet – coordinate 2"), Radius = D(tbOutletR, "Outlet – radius"), Value = D(tbOutletP, "Outlet – pressure") };
             geom.Gravity = new Vec3(D(tbGx, "gx"), D(tbGy, "gy"), D(tbGz, "gz"));
             if (geom.Dx <= 0)
             {
-                throw new FormatException("Velikost buňky musí být kladná.");
+                throw new FormatException("Cell size must be positive.");
             }
         }
 
@@ -286,7 +286,7 @@ namespace LBMStudio
         {
             if (geom == null)
             {
-                MessageBox.Show(this, "Nejprve vytvořte nebo vyberte geometrii vlevo.", Text);
+                MessageBox.Show(this, "First create or select a geometry on the left.", Text);
                 return;
             }
             using (var d = new OpenFileDialog { Filter = "CAD (*.step;*.stp;*.stl)|*.step;*.stp;*.stl|STEP (*.step;*.stp)|*.step;*.stp|STL (*.stl)|*.stl" })
@@ -309,7 +309,7 @@ namespace LBMStudio
             {
                 if (CadConverter.IsStep(file))
                 {
-                    LogGeom("Převod STEP → STL …");
+                    LogGeom("Converting STEP → STL …");
                     CadConverter.StepToStl(settings, file, dst, 0, LogGeom);
                     cbUnits.SelectedIndex = 0; // the converters write millimetres
                 }
@@ -320,7 +320,7 @@ namespace LBMStudio
                 rawMesh = StlMesh.Read(dst);
                 geom.SourceFile = file;
                 tbSource.Text = file;
-                LogGeom("Načteno " + rawMesh.TriangleCount + " trojúhelníků.");
+                LogGeom("Loaded " + rawMesh.TriangleCount + " triangles.");
                 ApplyUnits();
                 if (mesh != null)
                 {
@@ -342,7 +342,7 @@ namespace LBMStudio
             }
             catch (Exception ex)
             {
-                LogGeom("Chyba: " + ex.Message);
+                LogGeom("Error: " + ex.Message);
                 MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
@@ -356,14 +356,14 @@ namespace LBMStudio
             if (rawMesh == null)
             {
                 mesh = null;
-                lblGeomInfo.Text = "Žádný model – načtěte soubor STEP nebo STL.";
+                lblGeomInfo.Text = "No model – load a STEP or STL file.";
                 UpdateGeometryPreview();
                 return;
             }
             mesh = new StlMesh { V = (double[])rawMesh.V.Clone() };
             mesh.Scale(UnitScales[Math.Max(0, cbUnits.SelectedIndex)]);
             Vec3 s = mesh.Max - mesh.Min;
-            lblGeomInfo.Text = string.Format("Rozměry: {0} × {1} × {2} m, objem {3} m³, {4} trojúhelníků",
+            lblGeomInfo.Text = string.Format("Size: {0} × {1} × {2} m, volume {3} m³, {4} triangles",
                 Fmt.G(s.X), Fmt.G(s.Y), Fmt.G(s.Z), Fmt.G(Math.Abs(mesh.SignedVolume())), mesh.TriangleCount);
             UpdateGeometryPreview();
         }
@@ -418,12 +418,12 @@ namespace LBMStudio
             {
                 Vec3 s = max - min;
                 double cells = Math.Ceiling(s.X / dx + 2) * Math.Ceiling(s.Y / dx + 2) * Math.Ceiling(s.Z / dx + 2);
-                lblMeshEstimate.Text = string.Format("Mřížka přibližně {0} × {1} × {2} = {3:N0} buněk",
+                lblMeshEstimate.Text = string.Format("Grid approx. {0} × {1} × {2} = {3:N0} cells",
                     Math.Ceiling(s.X / dx + 2), Math.Ceiling(s.Y / dx + 2), Math.Ceiling(s.Z / dx + 2), cells);
                 if (chkRefine.Checked)
                 {
                     int lmax = cbMaxLevel.SelectedIndex + 1;
-                    lblMeshEstimate.Text += string.Format(" na úrovni 0, nejmenší buňka {0} m (úroveň {1})", Fmt.G(dx / (1 << lmax)), lmax);
+                    lblMeshEstimate.Text += string.Format(" on level 0, smallest cell {0} m (level {1})", Fmt.G(dx / (1 << lmax)), lmax);
                 }
             }
             try
@@ -454,7 +454,7 @@ namespace LBMStudio
         {
             if (geom == null || mesh == null)
             {
-                MessageBox.Show(this, "Nejprve načtěte geometrii.", Text);
+                MessageBox.Show(this, "Load the geometry first.", Text);
                 return;
             }
             try
@@ -483,12 +483,12 @@ namespace LBMStudio
                 if (t.Exception != null)
                 {
                     string msg = t.Exception.InnerException.Message;
-                    LogGeom("Chyba: " + msg);
+                    LogGeom("Error: " + msg);
                     MessageBox.Show(this, msg, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
-                LogGeom("Síť je hotová. Pokračujte na záložce Simulace." + (g.MeshLevels > 1 ? " Bloky v zobrazení mají barvu podle úrovně (0 šedá, 1 modrá, 2 zelená, 3 oranžová, 4 červená)." : ""));
-                SetStatus("Síť: " + g.BlockCount + " bloků, " + g.FluidCells + " buněk tekutiny");
+                LogGeom("The mesh is ready. Continue on the Simulation tab." + (g.MeshLevels > 1 ? " Blocks are colored by level (0 gray, 1 blue, 2 green, 3 orange, 4 red)." : ""));
+                SetStatus("Mesh: " + g.BlockCount + " blocks, " + g.FluidCells + " fluid cells");
                 ResetMeshDisplay();
                 UpdateMeshLayers();
                 RefreshSimulationList(null);
@@ -552,7 +552,7 @@ namespace LBMStudio
                 meshTypes = geom.LoadCellTypes(settings.Workspace);
                 if (meshTypes != null && meshTypes.LongLength != (long)geom.GX * geom.GY * geom.GZ)
                 {
-                    LogGeom("Soubor mesh/celltypes.bin neodpovídá síti, vytvořte síť znovu.");
+                    LogGeom("File mesh/celltypes.bin does not match the mesh, generate the mesh again.");
                     meshTypes = null;
                 }
                 try
@@ -561,7 +561,7 @@ namespace LBMStudio
                 }
                 catch (Exception ex)
                 {
-                    LogGeom("Chyba čtení mesh/octree.bin: " + ex.Message);
+                    LogGeom("Error reading mesh/octree.bin: " + ex.Message);
                     meshTree = null;
                 }
             }
@@ -591,7 +591,7 @@ namespace LBMStudio
                 }
                 if (cellsModel == null)
                 {
-                    LogGeom(string.Format("Povrch sítě má {0:N0} stěn buněk, zobrazit lze nejvýše {1:N0}. Použijte řez nebo hrubší síť.", faces, MeshDisplay.MaxFaces));
+                    LogGeom(string.Format("The mesh surface has {0:N0} cell faces, at most {1:N0} can be shown. Use a cut or a coarser mesh.", faces, MeshDisplay.MaxFaces));
                 }
             }
             if (ready && chkShowBlocks.Checked && blocksModel == null)

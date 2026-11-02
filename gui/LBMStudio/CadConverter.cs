@@ -150,7 +150,7 @@ namespace LBMStudio
             {
                 list.Add("FreeCAD");
             }
-            return list.Count == 0 ? "nenalezen (gmsh ani FreeCAD)" : string.Join(", ", list);
+            return list.Count == 0 ? "not found (neither gmsh nor FreeCAD)" : string.Join(", ", list);
         }
 
         /// <summary>Converts STEP to STL, the result keeps the units of the STEP file (usually mm).</summary>
@@ -219,8 +219,8 @@ namespace LBMStudio
                 }
             }
             throw new InvalidOperationException(
-                "Převod STEP → STL se nepodařil. Je potřeba gmsh (gmsh.exe v PATH nebo v Nastavení, případně 'pip install gmsh') " +
-                "nebo FreeCAD (FreeCADCmd.exe). Alternativně exportujte geometrii z CAD přímo do STL.");
+                "STEP → STL conversion failed. It needs gmsh (gmsh.exe in PATH or in Settings, or 'pip install gmsh') " +
+                "or FreeCAD (FreeCADCmd.exe). Alternatively export the geometry from CAD directly to STL.");
         }
 
         static int Run(string exe, string args, int timeoutMs, out string output)

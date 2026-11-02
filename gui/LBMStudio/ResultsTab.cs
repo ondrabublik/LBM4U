@@ -24,11 +24,11 @@ namespace LBMStudio
         string fieldsPath;
         byte[] cellTypes;
 
-        static readonly string[] FieldLabels = { "Velikost rychlosti |u|", "Rychlost ux", "Rychlost uy", "Rychlost uz", "Přetlak p", "Objemový podíl VOF", "Stav buňky" };
+        static readonly string[] FieldLabels = { "Velocity magnitude |u|", "Velocity ux", "Velocity uy", "Velocity uz", "Gauge pressure p", "Volume fraction VOF", "Cell state" };
 
         TabPage BuildResultsTab()
         {
-            var page = new TabPage("3. Výsledky");
+            var page = new TabPage("3. Results");
             var bar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4), WrapContents = true };
             Func<string, Control, Control> labeled = (text, c) =>
             {
@@ -43,7 +43,7 @@ namespace LBMStudio
             cbResField = Combo(FieldLabels);
             cbResField.Width = 170;
             cbResField.SelectedIndexChanged += (s, e) => UpdateSlice();
-            cbResAxis = Combo("řez kolmý na x", "řez kolmý na y", "řez kolmý na z");
+            cbResAxis = Combo("cut normal to x", "cut normal to y", "cut normal to z");
             cbResAxis.SelectedIndex = 1;
             cbResAxis.Width = 120;
             cbResAxis.SelectedIndexChanged += (s, e) => { ResetSliceRange(); UpdateSlice(); };
@@ -53,11 +53,11 @@ namespace LBMStudio
             tbResSlice = new TrackBar { Width = 200, Minimum = 0, Maximum = 0, TickStyle = TickStyle.None, Height = 30 };
             tbResSlice.ValueChanged += (s, e) => UpdateSlice();
             lblResSlice = new Label { AutoSize = true, Text = "—" };
-            chkVectors = new CheckBox { Text = "Vektory", AutoSize = true };
+            chkVectors = new CheckBox { Text = "Vectors", AutoSize = true };
             chkVectors.CheckedChanged += (s, e) => UpdateSlice();
-            chkSurface3D = new CheckBox { Text = "Hladina 3D", AutoSize = true, Checked = true };
+            chkSurface3D = new CheckBox { Text = "3D surface", AutoSize = true, Checked = true };
             chkSurface3D.CheckedChanged += (s, e) => Update3DResult();
-            chkPlay = new CheckBox { Text = "▶ Přehrát", Appearance = Appearance.Button, AutoSize = true };
+            chkPlay = new CheckBox { Text = "▶ Play", Appearance = Appearance.Button, AutoSize = true };
             playTimer = new Timer { Interval = 400 };
             playTimer.Tick += (s, e) =>
             {
@@ -68,14 +68,14 @@ namespace LBMStudio
                 tbResTime.Value = tbResTime.Value >= tbResTime.Maximum ? 0 : tbResTime.Value + 1;
             };
             chkPlay.CheckedChanged += (s, e) => playTimer.Enabled = chkPlay.Checked;
-            var btnRefresh = new Button { Text = "Obnovit", AutoSize = true };
+            var btnRefresh = new Button { Text = "Refresh", AutoSize = true };
             btnRefresh.Click += (s, e) => LoadResultList();
-            var btnPv = new Button { Text = "Otevřít v ParaView", AutoSize = true };
+            var btnPv = new Button { Text = "Open in ParaView", AutoSize = true };
             btnPv.Click += (s, e) => OpenParaView();
-            var btnPng = new Button { Text = "Uložit obrázek…", AutoSize = true };
+            var btnPng = new Button { Text = "Save image…", AutoSize = true };
             btnPng.Click += (s, e) =>
             {
-                using (var d = new SaveFileDialog { Filter = "PNG (*.png)|*.png", FileName = "rez.png" })
+                using (var d = new SaveFileDialog { Filter = "PNG (*.png)|*.png", FileName = "slice.png" })
                 {
                     if (d.ShowDialog(this) == DialogResult.OK)
                     {
@@ -90,11 +90,11 @@ namespace LBMStudio
             var slicePanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
             slicePanel.Controls.Add(tbResSlice);
             slicePanel.Controls.Add(lblResSlice);
-            bar.Controls.Add(labeled("Simulace", cbResSim));
-            bar.Controls.Add(labeled("Veličina", cbResField));
-            bar.Controls.Add(labeled("Řez", cbResAxis));
-            bar.Controls.Add(labeled("Poloha řezu", slicePanel));
-            bar.Controls.Add(labeled("Čas", timePanel));
+            bar.Controls.Add(labeled("Simulation", cbResSim));
+            bar.Controls.Add(labeled("Field", cbResField));
+            bar.Controls.Add(labeled("Slice", cbResAxis));
+            bar.Controls.Add(labeled("Slice position", slicePanel));
+            bar.Controls.Add(labeled("Time", timePanel));
             var opts = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(4, 14, 4, 0) };
             opts.Controls.AddRange(new Control[] { chkPlay, chkVectors, chkSurface3D, btnRefresh, btnPng, btnPv });
             bar.Controls.Add(opts);
@@ -168,8 +168,8 @@ namespace LBMStudio
             tbResTime.Maximum = Math.Max(0, resultFiles.Count - 1);
             if (resultFiles.Count == 0)
             {
-                lblResTime.Text = "žádné výsledky";
-                sliceView.SetData(new float[1, 1] { { float.NaN } }, null, 1, 1, "", "", "Simulace zatím nemá výsledky", "");
+                lblResTime.Text = "no results";
+                sliceView.SetData(new float[1, 1] { { float.NaN } }, null, 1, 1, "", "", "The simulation has no results yet", "");
                 resultView.Clear();
                 return;
             }
@@ -212,11 +212,11 @@ namespace LBMStudio
                 }
                 catch (Exception ex)
                 {
-                    SetStatus("Chyba čtení výsledků: " + ex.Message);
+                    SetStatus("Error reading the results: " + ex.Message);
                     return;
                 }
             }
-            lblResTime.Text = "t = " + Fmt.G(fields.Time, 4) + " s (iterace " + fields.Iteration + ")";
+            lblResTime.Text = "t = " + Fmt.G(fields.Time, 4) + " s (iteration " + fields.Iteration + ")";
             UpdateSlice();
             Update3DResult();
         }
@@ -294,7 +294,7 @@ namespace LBMStudio
                             break;
                         case 6:
                             vals[a, b] = flag;
-                            unit = "1 kap., 2 plyn, 3 rozhraní";
+                            unit = "1 liquid, 2 gas, 3 interface";
                             break;
                     }
                     if (vu != null)
@@ -362,7 +362,7 @@ namespace LBMStudio
                     }
                     catch (Exception ex)
                     {
-                        SetStatus("Chyba čtení hladiny: " + ex.Message);
+                        SetStatus("Error reading the surface: " + ex.Message);
                     }
                 }
             }
@@ -386,7 +386,7 @@ namespace LBMStudio
             string pvd = Path.Combine(dir, "result", "output.pvd");
             if (string.IsNullOrEmpty(settings.ParaViewExe) || !File.Exists(settings.ParaViewExe))
             {
-                MessageBox.Show(this, "ParaView nebyl nalezen, nastavte cestu v Nastavení.", Text);
+                MessageBox.Show(this, "ParaView was not found, set its path in Settings.", Text);
                 return;
             }
             var args = new List<string>();

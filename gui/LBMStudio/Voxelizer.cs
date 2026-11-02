@@ -41,7 +41,7 @@ namespace LBMStudio
             long n = (long)g.Nx * g.Ny * g.Nz;
             if (n > 400000000)
             {
-                throw new InvalidOperationException("Síť by měla " + n + " buněk, zvětšete velikost buňky.");
+                throw new InvalidOperationException("The mesh would have " + n + " cells, increase the cell size.");
             }
             g.Inside = new byte[n];
 

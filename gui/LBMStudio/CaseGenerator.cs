@@ -212,11 +212,11 @@ namespace LBMStudio
         {
             if (def.Dx <= 0)
             {
-                throw new ArgumentException("Velikost buňky musí být kladná.");
+                throw new ArgumentException("Cell size must be positive.");
             }
             int marginCells = def.Region == FluidRegion.OutsideBody ? (int)Math.Ceiling(def.Margin / def.Dx) : 0;
             int padding = 1 + marginCells;
-            log("Voxelizace (" + mesh.TriangleCount + " trojúhelníků, dx = " + Fmt.G(def.Dx) + " m) ...");
+            log("Voxelization (" + mesh.TriangleCount + " triangles, dx = " + Fmt.G(def.Dx) + " m) ...");
             VoxelGrid vg = Voxelizer.Voxelize(mesh, def.Dx, padding);
             int bs = def.BlockSize;
             int nbi = (vg.Nx + bs - 1) / bs, nbj = (vg.Ny + bs - 1) / bs, nbk = (vg.Nz + bs - 1) / bs;
@@ -255,9 +255,9 @@ namespace LBMStudio
             bool refine = def.Refine && def.MaxLevel > 0;
             if (fluid == 0 && !refine)
             {
-                throw new InvalidOperationException("Síť neobsahuje žádnou buňku tekutiny. Zkontrolujte jednotky, velikost buňky a uzavřenost geometrie.");
+                throw new InvalidOperationException("The mesh contains no fluid cell. Check the units, the cell size and that the geometry is closed.");
             }
-            log("Buněk tekutiny: " + fluid + (refine ? " (úroveň 0)" : ""));
+            log("Fluid cells: " + fluid + (refine ? " (level 0)" : ""));
 
             def.Nx = vg.Nx;
             def.Ny = vg.Ny;
@@ -272,18 +272,18 @@ namespace LBMStudio
             def.OutletCells = def.Outlet.Enabled ? MarkPort(def, def.Outlet, types, GX, GY, GZ, Outlet) : 0;
             if (def.Inlet.Enabled)
             {
-                log("Buněk vtoku: " + def.InletCells);
+                log("Inlet cells: " + def.InletCells);
                 if (def.InletCells == 0)
                 {
-                    log("Varování: vtok neleží na povrchu tekutiny – zkontrolujte stěnu, střed a poloměr.");
+                    log("Warning: the inlet does not lie on the fluid surface – check the face, center and radius.");
                 }
             }
             if (def.Outlet.Enabled)
             {
-                log("Buněk výtoku: " + def.OutletCells);
+                log("Outlet cells: " + def.OutletCells);
                 if (def.OutletCells == 0)
                 {
-                    log("Varování: výtok neleží na povrchu tekutiny.");
+                    log("Warning: the outlet does not lie on the fluid surface.");
                 }
             }
             def.FluidCells = fluid;
@@ -390,7 +390,7 @@ namespace LBMStudio
             def.MeshLevels = 1;
             def.LevelBlocks = count.ToString();
             def.MeshReady = true;
-            log("Bloků: " + count + " z " + (nbi * nbj * nbk) + " (" + bs + "³ buněk)");
+            log("Blocks: " + count + " of " + (nbi * nbj * nbk) + " (" + bs + "³ cells)");
             def.Save(workspace);
         }
 
@@ -398,25 +398,25 @@ namespace LBMStudio
         static void GenerateRefined(GeometryDef def, StlMesh mesh, VoxelGrid vg, byte[] baseTypes, int nbi, int nbj, int nbk, string workspace, Action<string> log)
         {
             var spec = new RefinementSpec { MaxLevel = def.MaxLevel, GapCells = def.GapCells, CurvatureCells = def.CurvatureCells, WallLevel = Math.Min(def.WallLevel, def.MaxLevel) };
-            log("Zahušťování sítě: max. úroveň " + spec.MaxLevel + " (nejmenší buňka " + Fmt.G(def.Dx / (1 << spec.MaxLevel)) + " m), " +
-                Fmt.G(spec.GapCells) + " buněk přes mezeru" + (spec.CurvatureCells > 0 ? ", " + Fmt.G(spec.CurvatureCells) + " buněk na poloměr zakřivení" : "") + " ...");
+            log("Mesh refinement: max. level " + spec.MaxLevel + " (smallest cell " + Fmt.G(def.Dx / (1 << spec.MaxLevel)) + " m), " +
+                Fmt.G(spec.GapCells) + " cells across a gap" + (spec.CurvatureCells > 0 ? ", " + Fmt.G(spec.CurvatureCells) + " cells per curvature radius" : "") + " ...");
             OctreeMesh tree = OctreeBuilder.Build(def, mesh, vg, baseTypes, nbi, nbj, nbk, spec, log);
             def.InletCells = def.Inlet.Enabled ? OctreeBuilder.MarkPort(def, def.Inlet, tree, Inlet) : 0;
             def.OutletCells = def.Outlet.Enabled ? OctreeBuilder.MarkPort(def, def.Outlet, tree, Outlet) : 0;
             if (def.Inlet.Enabled)
             {
-                log("Buněk vtoku: " + def.InletCells);
+                log("Inlet cells: " + def.InletCells);
                 if (def.InletCells == 0)
                 {
-                    log("Varování: vtok neleží na povrchu tekutiny – zkontrolujte stěnu, střed a poloměr.");
+                    log("Warning: the inlet does not lie on the fluid surface – check the face, center and radius.");
                 }
             }
             if (def.Outlet.Enabled)
             {
-                log("Buněk výtoku: " + def.OutletCells);
+                log("Outlet cells: " + def.OutletCells);
                 if (def.OutletCells == 0)
                 {
-                    log("Varování: výtok neleží na povrchu tekutiny.");
+                    log("Warning: the outlet does not lie on the fluid surface.");
                 }
             }
 
@@ -431,7 +431,7 @@ namespace LBMStudio
             def.FluidCells = fluidPerLevel.Sum();
             for (int l = 0; l <= tree.MaxLevel; l++)
             {
-                log("Úroveň " + l + " (dx = " + Fmt.G(def.Dx / (1 << l)) + " m): " + perLevel[l] + " bloků, " + fluidPerLevel[l] + " buněk tekutiny");
+                log("Level " + l + " (dx = " + Fmt.G(def.Dx / (1 << l)) + " m): " + perLevel[l] + " blocks, " + fluidPerLevel[l] + " fluid cells");
             }
 
             string dir = def.Dir(workspace);
@@ -504,7 +504,7 @@ namespace LBMStudio
             def.MeshLevels = tree.MaxLevel + 1;
             def.LevelBlocks = string.Join(" ", perLevel);
             def.MeshReady = true;
-            log("Bloků: " + def.BlockCount + " (" + bs + "³ buněk), " + def.MeshCells + " buněk celkem");
+            log("Blocks: " + def.BlockCount + " (" + bs + "³ cells), " + def.MeshCells + " cells in total");
             def.Save(workspace);
         }
 
