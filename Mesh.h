@@ -60,9 +60,13 @@ public:
 		int bc[3];                       // block coordinates
 		vector<int> srcBlock, srcLocal;  // per cell 1 (coarser) or 8 (finer) source cells, srcBlock -1 if missing
 		vector<int> near1, near2;        // cells touching a computed cell of the level, at most 2 cells from it
+		vector<int> halo;                // cells read by the stencils of the computed cells (at most GHOST_HALO cells from them)
+		vector<int> nbReal;              // computed blocks of the level in the 26-neighbourhood
+		int stamp = -1;                  // explosion of the coarser state the ghost holds
 	};
 	vector<vector<GhostBlock> > levelGhosts;
 	int curLevel;                        // level processed by evalBlocks, -1 for all levels
+	vector<int> explodeStamp;            // number of explosions to the ghosts of each level
 	int* ex, * ey, * ez, * opp;
 	double* w;
 	int* indIn; // interior indexes
@@ -102,6 +106,7 @@ public:
 	double getUmax();
 	double getCt();
 	long long cellUpdatesPerIteration();
+	long long activeBlockCellUpdates();
 	void writeResultsToVTK(int iter);
 	void writeResultsToOutFile();
 	void writeBoundaryToVTK();
@@ -132,13 +137,22 @@ public:
 			}
 		}
 	}
-	// runs fn(ghost) for the ghost blocks of the level with the given source (0 - all) in parallel
-	template <class F> void forGhosts(int level, int source, F fn) {
+	// a ghost block is needed only next to a non empty computed block (empty free surface blocks are skipped)
+	bool ghostActive(const GhostBlock& g) const {
+		for (int slot : g.nbReal) {
+			if (!blocks[slot]->isBlockEmpty) {
+				return true;
+			}
+		}
+		return false;
+	}
+	// runs fn(ghost) for the (active, all with all = true) ghost blocks of the level with the given source (0 - all) in parallel
+	template <class F> void forGhosts(int level, int source, F fn, bool all = false) {
 		vector<GhostBlock>& list = levelGhosts[level];
 		int n = (int)list.size();
 #pragma omp parallel for schedule(dynamic)
 		for (int i = 0; i < n; i++) {
-			if (source == 0 || list[i].source == source) {
+			if ((source == 0 || list[i].source == source) && (all || ghostActive(list[i]))) {
 				fn(list[i]);
 			}
 		}
@@ -151,9 +165,12 @@ private:
 	void initGhostNear();
 	void syncGhostGeometry();
 	// copies the state of the level - 1 to the ghosts of the level (populations: homogeneous explosion)
-	void explodeToGhosts(int level);
+	void explodeToGhosts(int level, bool all = false);
+	void explodeGhost(GhostBlock& g);
+	// ghosts that became active after the explosion of the current coarser step
+	void refreshGhosts(int level);
 	// fills the ghosts of the level from the level + 1 (populations: coalescence of the streamed ones)
-	void coalesceToGhosts(int level, bool streamed);
+	void coalesceToGhosts(int level, bool streamed, bool all = false);
 	void syncGhosts();
 	void computeLost(int level);
 	void accountFsExchange(int level);

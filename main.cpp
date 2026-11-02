@@ -130,7 +130,12 @@ static int run(int argc, char** argv) {
 			if (problemID == 4) {
 				cout << ", nP = " << mesh->nParticles << ", maxP = " << mesh->maxParticlesInCell;
 			}
-			cout << ", MLUPS = " << mlups << endl;
+			cout << ", MLUPS = " << mlups;
+			if (mesh->isFreeSurface() && iter > 0) {
+				// MLUPS counts the liquid cells only, the work is done for all cells of the non empty blocks
+				cout << " (active blocks " << (double)mesh->activeBlockCellUpdates() * iters / elapsed / 1e6 << " Mcells/s)";
+			}
+			cout << endl;
 			if (problemID == 2) {
 				mesh->particles->getParticlesInfo();
 			}

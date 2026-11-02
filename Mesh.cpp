@@ -103,6 +103,17 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 	}
 	initGhostMaps();
 	initGhostNear();
+	explodeStamp.assign(maxLevel + 1, 0);
+	for (int l = 0; l <= maxLevel; l++) {
+		for (GhostBlock& g : levelGhosts[l]) {
+			for (int d = 0; d < 27; d++) {
+				int slot = grid.find(l, g.bc[0] + d % 3 - 1, g.bc[1] + d / 3 % 3 - 1, g.bc[2] + d / 9 - 1);
+				if (d != 13 && slot >= 0 && slot < nBlockMax && blocks[slot] && blocks[slot]->ghost == GHOST_NONE) {
+					g.nbReal.push_back(slot);
+				}
+			}
+		}
+	}
 	for (int l = 0; l <= maxLevel && maxLevel > 0; l++) {
 		for (int slot : levelBlocks[l]) {
 			blocks[slot]->massCorr = new double[ni * nj * nk]();
@@ -195,7 +206,7 @@ void Mesh::initBlocks() {
 			forGhosts(l, 0, [this](GhostBlock& g) {
 				blocks[g.slot]->initZeroCondition();
 				blocks[g.slot]->computeShiftIndexes();
-			});
+			}, true);
 		}
 		syncGhosts();
 	}
@@ -454,6 +465,9 @@ void Mesh::advanceLevel(int level, int iterLevel) {
 		advanceLevel(level + 1, 2 * iterLevel);
 		advanceLevel(level + 1, 2 * iterLevel + 1);
 		coalesceToGhosts(level, true);
+	}
+	if (level > 0) {
+		refreshGhosts(level);
 	}
 	curLevel = level;
 	switch (problemID) {
@@ -1021,13 +1035,17 @@ void Mesh::initGhostNear() {
 			all.push_back(&g);
 		}
 	}
-	dist.assign(all.size(), vector<char>(ni * nj * nk, 3));
-	for (int pass = 1; pass <= 2; pass++) {
+	// free surface stencils of the computed cells reach 3 cells (height function), the smoothed volume fraction,
+	// normals and curvature of the ghost cells they read need 3 more
+	const int GHOST_HALO = 6;
+	const char FAR = 100;
+	dist.assign(all.size(), vector<char>(ni * nj * nk, FAR));
+	for (int pass = 1; pass <= GHOST_HALO; pass++) {
 #pragma omp parallel for schedule(dynamic)
 		for (int gi = 0; gi < (int)all.size(); gi++) {
 			Block* b = blocks[all[gi]->slot];
 			for (int ind = 0; ind < b->nAll; ind++) {
-				if (dist[gi][ind] < 3) {
+				if (dist[gi][ind] < FAR) {
 					continue;
 				}
 				bool hit = false;
@@ -1043,20 +1061,20 @@ void Mesh::initGhostNear() {
 								hit = blocks[bl]->ghost == GHOST_NONE;
 							}
 							else {
-								hit = ghostIndex[bl] >= 0 && dist[ghostIndex[bl]][loc] == 1;
+								hit = ghostIndex[bl] >= 0 && dist[ghostIndex[bl]][loc] == pass - 1;
 							}
 						}
 					}
 				}
 				if (hit) {
-					dist[gi][ind] = (char)(10 + pass); // marked, finalized below so that the pass reads only older marks
+					dist[gi][ind] = (char)(-pass); // marked, finalized below so that the pass reads only older marks
 				}
 			}
 		}
 		for (auto& d : dist) {
 			for (char& c : d) {
-				if (c > 10) {
-					c -= 10;
+				if (c < 0) {
+					c = (char)-c;
 				}
 			}
 		}
@@ -1064,7 +1082,11 @@ void Mesh::initGhostNear() {
 	for (size_t gi = 0; gi < all.size(); gi++) {
 		all[gi]->near1.clear();
 		all[gi]->near2.clear();
+		all[gi]->halo.clear();
 		for (int ind = 0; ind < ni * nj * nk; ind++) {
+			if (dist[gi][ind] <= GHOST_HALO) {
+				all[gi]->halo.push_back(ind);
+			}
 			if (dist[gi][ind] == 1) {
 				all[gi]->near1.push_back(ind);
 			}
@@ -1105,37 +1127,50 @@ void Mesh::syncGhostGeometry() {
 				b->cellType[ind] = (unsigned char)type;
 				b->boundary[ind] = type != CT_FLUID;
 			}
-		});
+		}, true);
 	}
 }
 
 // state of all ghosts from the current state of the computed blocks (initialization)
 void Mesh::syncGhosts() {
 	for (int l = 1; l <= maxLevel; l++) {
-		explodeToGhosts(l);
+		explodeToGhosts(l, true);
 	}
 	for (int l = maxLevel - 1; l >= 0; l--) {
-		coalesceToGhosts(l, false);
+		coalesceToGhosts(l, false, true);
 	}
 }
 
-void Mesh::explodeToGhosts(int level) {
-	forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
-		Block* b = blocks[g.slot];
-		b->resetGhost();
-		for (int ind = 0; ind < b->nAll; ind++) {
-			b->prolongCell(ind, blocks[g.srcBlock[ind]], g.srcLocal[ind]);
+void Mesh::explodeGhost(GhostBlock& g) {
+	Block* b = blocks[g.slot];
+	b->resetGhost();
+	for (int ind : g.halo) {
+		b->prolongCell(ind, blocks[g.srcBlock[ind]], g.srcLocal[ind]);
+	}
+	g.stamp = explodeStamp[b->level];
+}
+
+void Mesh::explodeToGhosts(int level, bool all) {
+	explodeStamp[level]++;
+	forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) { explodeGhost(g); }, all);
+}
+
+void Mesh::refreshGhosts(int level) {
+	int stamp = explodeStamp[level];
+	forGhosts(level, GHOST_FROM_COARSER, [this, stamp](GhostBlock& g) {
+		if (g.stamp != stamp) {
+			explodeGhost(g); // the coarser level does not change during the finer steps
 		}
 	});
 }
 
-void Mesh::coalesceToGhosts(int level, bool streamed) {
+void Mesh::coalesceToGhosts(int level, bool streamed, bool all) {
 	forGhosts(level, GHOST_FROM_FINER, [this, level, streamed](GhostBlock& g) {
 		Block* b = blocks[g.slot];
 		Block* src[8];
 		b->resetGhost();
 		if (!streamed || isFreeSurface()) {
-			for (int ind = 0; ind < b->nAll; ind++) {
+			for (int ind : g.halo) {
 				for (int o = 0; o < 8; o++) {
 					int sb = g.srcBlock[8 * ind + o];
 					src[o] = sb < 0 ? nullptr : blocks[sb];
@@ -1183,7 +1218,7 @@ void Mesh::coalesceToGhosts(int level, bool streamed) {
 				}
 			}
 		}
-	});
+	}, all);
 }
 
 // mass of the post-collision populations of the level streaming towards the finer level
@@ -1352,6 +1387,7 @@ void Mesh::activateFromGhosts(int level) {
 	}
 }
 
+// corrections go only to fluid cells, empty blocks have none (and are skipped)
 void Mesh::applyMassCorr(int level) {
 	int saved = curLevel;
 	curLevel = level;
@@ -1369,7 +1405,7 @@ void Mesh::applyMassCorr(int level) {
 				b->massCorr[ind] = 0;
 			}
 		}
-	}, false);
+	});
 	curLevel = saved;
 }
 
@@ -2014,6 +2050,17 @@ long long Mesh::cellUpdatesPerIteration() {
 	long long n = 0;
 	for (int b = 0; b < nBlock; b++) {
 		n += (long long)ni * nj * nk << blockLevel[b];
+	}
+	return n;
+}
+
+// cell updates of one iteration in the non empty blocks
+long long Mesh::activeBlockCellUpdates() {
+	long long n = 0;
+	for (int b = 0; b < nBlock; b++) {
+		if (!blocks[blockId[b]]->isBlockEmpty) {
+			n += (long long)ni * nj * nk << blockLevel[b];
+		}
 	}
 	return n;
 }
