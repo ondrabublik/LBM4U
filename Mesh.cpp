@@ -1466,6 +1466,14 @@ namespace {
 			else {
 				encode((const uint8_t*)v.data(), v.size() * sizeof(T), a.data);
 			}
+			// the first scalar and vector of the cell data are active as in the legacy format,
+			// ParaView colors by the active scalars when opening the file
+			if (section == "CellData") {
+				string& active = nComp == 1 ? scalars : vectors;
+				if (active.empty() && (nComp == 1 || nComp == 3)) {
+					active = name;
+				}
+			}
 			arrays.push_back(std::move(a));
 		}
 
@@ -1485,7 +1493,11 @@ namespace {
 			}
 			uint64_t offset = 0;
 			for (auto& s : sections) {
-				os << "<" << s << ">\n";
+				os << "<" << s;
+				if (s == "CellData") {
+					os << (scalars.empty() ? "" : " Scalars=\"" + scalars + "\"") << (vectors.empty() ? "" : " Vectors=\"" + vectors + "\"");
+				}
+				os << ">\n";
 				for (auto& a : arrays) {
 					if (a.section == s) {
 						if (binary) {
@@ -1516,6 +1528,7 @@ namespace {
 			vector<uint8_t> data;
 		};
 		vector<Array> arrays;
+		string scalars, vectors;
 
 		static void put64(vector<uint8_t>& out, uint64_t v) {
 			for (int b = 0; b < 8; b++) {
