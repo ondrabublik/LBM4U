@@ -1792,7 +1792,7 @@ void Mesh::writeFieldsBinary(int iter) {
 	// version 2 adds the level of the blocks, version 3 compresses the block data into one raw deflate stream
 	i32(compressResults ? 3 : (maxLevel > 0 ? 2 : 1));
 	i32(iter);
-	f64(iter * b0->Ct);
+	f64(iter * getCt()); // time step of the level 0, the first block may be finer
 	i32(problemID);
 	i32(nBlock);
 	i32(ni);
