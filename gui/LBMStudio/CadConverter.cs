@@ -13,6 +13,14 @@ namespace LBMStudio
     /// </summary>
     public static class CadConverter
     {
+        /// <summary>
+        /// Mesh size from the curvature for gmsh (Mesh.MeshSizeFromCurvature, -clcurv). Without it gmsh divides
+        /// circles into 12-15 segments; 32 gives 64 segments on a full circle with gmsh 4.15 (chord error 0.12 % of the radius).
+        /// </summary>
+        const int GmshCurvatureElements = 32;
+        /// <summary>FreeCAD angular deflection [rad], 0.1 gives about 64 segments on a full circle.</summary>
+        const double FreeCadAngularDeflection = 0.1;
+
         public static bool IsStep(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
@@ -157,7 +165,7 @@ namespace LBMStudio
             string gmsh = FindGmsh(s);
             if (gmsh != null)
             {
-                string args = "\"" + step + "\" -2 -format stl -o \"" + stl + "\"";
+                string args = "\"" + step + "\" -2 -clcurv " + GmshCurvatureElements + " -format stl -o \"" + stl + "\"";
                 if (maxElementSize > 0)
                 {
                     args += " -clmax " + Fmt.D(maxElementSize);
@@ -178,6 +186,7 @@ namespace LBMStudio
                     "import sys, gmsh\n" +
                     "gmsh.initialize()\n" +
                     "gmsh.option.setNumber('General.Terminal', 1)\n" +
+                    "gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', " + GmshCurvatureElements + ")\n" +
                     (maxElementSize > 0 ? "gmsh.option.setNumber('Mesh.MeshSizeMax', " + Fmt.D(maxElementSize) + ")\n" : "") +
                     "gmsh.open(sys.argv[1])\n" +
                     "gmsh.model.mesh.generate(2)\n" +
@@ -199,7 +208,7 @@ namespace LBMStudio
                 File.WriteAllText(script,
                     "import Part, MeshPart\n" +
                     "shape = Part.read(r'" + step + "')\n" +
-                    "mesh = MeshPart.meshFromShape(Shape=shape, LinearDeflection=" + Fmt.D(deflection) + ", AngularDeflection=0.3)\n" +
+                    "mesh = MeshPart.meshFromShape(Shape=shape, LinearDeflection=" + Fmt.D(deflection) + ", AngularDeflection=" + Fmt.D(FreeCadAngularDeflection) + ")\n" +
                     "mesh.write(r'" + stl + "')\n");
                 log("FreeCADCmd " + script);
                 Run(freecad, "\"" + script + "\"", 600000, out output);
