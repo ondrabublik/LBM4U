@@ -126,7 +126,7 @@ gui\bin\LBMStudio.exe --selftest <file.stl|step> <output dir> [cLBMnet.exe] [--r
 | `tests/` | unit tests |
 | `gui/` | LBM Studio (C#, WinForms + WPF 3D) – [description](gui/README.md) |
 | `matlab/` | older MATLAB scripts for case preparation |
-| `ZMENY.md` | [change log](ZMENY.md) (in Czech): numerical details and the `fields_<iter>.bin` format |
+| `CHANGES.md` | [change log](CHANGES.md): fixed bugs, numerical details and the `fields_<iter>.bin` format |
 
 ## Authors
 
