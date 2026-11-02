@@ -73,7 +73,8 @@ Návratový kód 3 znamená divergenci (NaN).
 * `BlockBasic`: spojený výpočet momentů a kolize.
 * Volitelné FP32 populace + posun DDF (`ddfShift = 1`).
 * Vzdálenostní funkce Dijkstrovým algoritmem (stejný výsledek, O(N log N)).
-* Binární VTK (`vtkBinary = 1`), kolekce `output.pvd`/`outputFS.pvd`, kompaktní `fields_<iter>.bin` pro GUI (`writeFields = 1`).
+* Výstupy ve formátu VTK XML: `output_*.vtu`, hladina `outputFS_*.vtp`, `boundary.vtu`, kolekce `output.pvd`/`outputFS.pvd` (ParaView čte v `.pvd` jen XML soubory, starší legacy `.vtk` v kolekci hlásil "Could not determine the data type"). Binární data za hlavičkou (`vtkBinary = 1`, jinak ASCII), kompaktní `fields_<iter>.bin` pro GUI (`writeFields = 1`).
+* Komprese výsledků (`compressResults = 1`, výchozí): pole VTK jsou komprimovaná zlibem po blocích 1 MB (`vtkZLibDataCompressor`, ParaView je čte přímo), `fields_<iter>.bin` má verzi 3 s daty bloků v jednom proudu deflate. Kompresor je vlastní (`Deflate.cpp`, bez závislosti na zlib), bloky se komprimují paralelně. Do `.vtu` se zapisují jen body použité buňkami.
 * MLUPS z `omp_get_wtime` průměrované přes interval ukládání.
 
 ## Zahušťování sítě (octree)
@@ -100,8 +101,9 @@ Statické zahušťování podle geometrie: síť vznikne jednou při generován�
 ## Formát `fields_<iter>.bin`
 
 ```
-char[4] "LBMF", int32 verze (1, zahuštěná síť 2), int32 iterace, double čas, int32 problemID,
+char[4] "LBMF", int32 verze (1, zahuštěná síť 2, komprimovaný 3), int32 iterace, double čas, int32 problemID,
 int32 nBlock, int32 ni, nj, nk, double Ch (úroveň 0), int32 nFields, nFields × char[16] název
-pro každý blok: int32 bi, bj, bk, [verze 2: int32 úroveň]; pro každé pole float32[ni*nj*nk] (index i + ni*j + ni*nj*k)
+pro každý blok: int32 bi, bj, bk, [verze 2, 3: int32 úroveň]; pro každé pole float32[ni*nj*nk] (index i + ni*j + ni*nj*k)
+verze 3: vše za hlavičkou (od prvního bloku) je jeden raw deflate proud (RFC 1951, bez zlib hlavičky)
 pole: ux, uy, uz [m/s], p [Pa], type (typ buňky), u volné hladiny navíc vof, flag
 ```

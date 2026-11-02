@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -71,6 +72,8 @@ namespace LBMStudio
                 {
                     d.Names[f] = Encoding.ASCII.GetString(r.ReadBytes(16)).TrimEnd('\0');
                 }
+                // version 3: the block data are one raw deflate stream
+                BinaryReader br = version >= 3 ? new BinaryReader(new DeflateStream(fs, CompressionMode.Decompress)) : r;
                 int D = version >= 2 ? displayLevel : 0;
                 d.Scale = 1 << D;
                 gx <<= D;
@@ -97,8 +100,8 @@ namespace LBMStudio
                 int itype = Array.IndexOf(d.Names, "type"), iflag = Array.IndexOf(d.Names, "flag");
                 for (int b = 0; b < nBlock; b++)
                 {
-                    int bi = r.ReadInt32(), bj = r.ReadInt32(), bk = r.ReadInt32();
-                    int level = version >= 2 ? r.ReadInt32() : 0;
+                    int bi = br.ReadInt32(), bj = br.ReadInt32(), bk = br.ReadInt32();
+                    int level = version >= 2 ? br.ReadInt32() : 0;
                     int up = Math.Max(0, D - level), down = Math.Max(0, level - D);
                     int rep = 1 << up;
                     if (down > 0 && count == null)
@@ -108,7 +111,12 @@ namespace LBMStudio
                     }
                     for (int f = 0; f < nFields; f++)
                     {
-                        int read = r.Read(buf, 0, buf.Length);
+                        // a decompressing stream may return less than requested
+                        int read = 0, got;
+                        while (read < buf.Length && (got = br.Read(buf, read, buf.Length - read)) > 0)
+                        {
+                            read += got;
+                        }
                         if (read != buf.Length)
                         {
                             throw new EndOfStreamException("Neúplný soubor " + path);
@@ -224,13 +232,17 @@ namespace LBMStudio
         }
     }
 
-    /// <summary>Triangulated free surface from result/outputFS_*.vtk (legacy VTK, binary or ASCII).</summary>
+    /// <summary>Triangulated free surface from result/outputFS_*.vtp (VTK XML) or *.vtk (legacy VTK of older results).</summary>
     public static class SurfaceVtk
     {
         /// <summary>Returns 9 floats per triangle in lattice units.</summary>
         public static float[] Read(string path)
         {
             byte[] all = File.ReadAllBytes(path);
+            if (path.EndsWith(".vtp", StringComparison.OrdinalIgnoreCase))
+            {
+                return ReadVtp(all);
+            }
             int pos = 0;
             Func<string> readLine = () =>
             {
@@ -282,14 +294,88 @@ namespace LBMStudio
             return pts;
         }
 
+        /// <summary>Points of a PolyData file as written by the solver: ascii or appended raw data with UInt64 headers, optionally zlib compressed.</summary>
+        static float[] ReadVtp(byte[] all)
+        {
+            int app = IndexOf(all, Encoding.ASCII.GetBytes("<AppendedData"));
+            string xml = Encoding.ASCII.GetString(all, 0, app < 0 ? all.Length : app);
+            var m = Regex.Match(xml, @"<Points>\s*<DataArray([^>]*)>");
+            var np = Regex.Match(xml, "NumberOfPoints=\"(\\d+)\"");
+            if (!m.Success || !np.Success)
+            {
+                return new float[0];
+            }
+            int n = int.Parse(np.Groups[1].Value, CultureInfo.InvariantCulture);
+            var pts = new float[3 * n];
+            var off = Regex.Match(m.Groups[1].Value, "offset=\"(\\d+)\"");
+            if (!off.Success)
+            {
+                int start = m.Index + m.Length;
+                string text = xml.Substring(start, xml.IndexOf("</DataArray>", start, StringComparison.Ordinal) - start);
+                var tokens = text.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 0; i < pts.Length && i < tokens.Length; i++)
+                {
+                    pts[i] = float.Parse(tokens[i], CultureInfo.InvariantCulture);
+                }
+                return pts;
+            }
+            long pos = Array.IndexOf(all, (byte)'_', app) + 1 + long.Parse(off.Groups[1].Value, CultureInfo.InvariantCulture);
+            var bytes = new byte[pts.Length * 4];
+            if (!xml.Contains("vtkZLibDataCompressor"))
+            {
+                Array.Copy(all, pos + 8, bytes, 0, bytes.Length);
+            }
+            else
+            {
+                // number of blocks, block size, partial last block size, compressed block sizes, blocks
+                long nb = BitConverter.ToInt64(all, (int)pos);
+                long data = pos + 24 + 8 * nb;
+                using (var ms = new MemoryStream(bytes))
+                {
+                    for (long b = 0; b < nb; b++)
+                    {
+                        int size = (int)BitConverter.ToInt64(all, (int)(pos + 24 + 8 * b));
+                        // zlib stream: 2 byte header and adler32 around the raw deflate data
+                        using (var z = new DeflateStream(new MemoryStream(all, (int)data + 2, size - 6), CompressionMode.Decompress))
+                        {
+                            z.CopyTo(ms);
+                        }
+                        data += size;
+                    }
+                }
+            }
+            Buffer.BlockCopy(bytes, 0, pts, 0, bytes.Length);
+            return pts;
+        }
+
+        static int IndexOf(byte[] data, byte[] pattern)
+        {
+            for (int i = 0; i + pattern.Length <= data.Length; i++)
+            {
+                int k = 0;
+                while (k < pattern.Length && data[i + k] == pattern[k])
+                {
+                    k++;
+                }
+                if (k == pattern.Length)
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
         public static string FileForIteration(string simDir, int iteration, double time)
         {
             // the solver names the files by time in microseconds
             long us = (long)Math.Round(time * 1e6);
-            string path = Path.Combine(simDir, "result", "outputFS_" + us + "us.vtk");
-            if (File.Exists(path))
+            foreach (string ext in new[] { ".vtp", ".vtk" })
             {
-                return path;
+                string path = Path.Combine(simDir, "result", "outputFS_" + us + "us" + ext);
+                if (File.Exists(path))
+                {
+                    return path;
+                }
             }
             // tolerate rounding differences
             string dir = Path.Combine(simDir, "result");
@@ -297,10 +383,10 @@ namespace LBMStudio
             {
                 return null;
             }
-            var rx = new Regex(@"outputFS_(\d+)us\.vtk$");
+            var rx = new Regex(@"outputFS_(\d+)us\.vt[kp]$");
             string best = null;
             long bestDiff = long.MaxValue;
-            foreach (var f in Directory.GetFiles(dir, "outputFS_*us.vtk"))
+            foreach (var f in Directory.GetFiles(dir, "outputFS_*us.vt?"))
             {
                 var m = rx.Match(f);
                 if (m.Success)

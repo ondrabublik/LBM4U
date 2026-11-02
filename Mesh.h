@@ -80,6 +80,7 @@ public:
 	int nIntIterParticle;
 	double gravityRotationOmega;
 	bool vtkBinary;
+	bool compressResults; // zlib compressed VTK arrays and deflated fields_<iter>.bin
 	bool writeFields;
 	vector<pair<double, string> > vtkFiles, vtkFsFiles;
 

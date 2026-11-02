@@ -6,7 +6,10 @@
 #include "Mesh.h"
 #include "MarchingCubes.h"
 #include "Block.h"
+#include "Deflate.h"
 #include <queue>
+#include <algorithm>
+#include <sstream>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -37,6 +40,7 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 	gravityRotationOmega = Block::getParDouble("gravityRotationOmega", par, false, 0.89);
 	vtkBinary = Block::getParInt("vtkBinary", par, false, 1) != 0;
 	writeFields = Block::getParInt("writeFields", par, false, 1) != 0;
+	compressResults = Block::getParInt("compressResults", par, false, 1) != 0;
 	if (Block::hasPar("collisionModel", par)) {
 		collisionModel = Block::getParInt("collisionModel", par, false, 0);
 	}
@@ -1433,104 +1437,196 @@ void Mesh::writePvd(const string& fileName, const vector<pair<double, string> >&
 }
 
 namespace {
-	// legacy VTK writer, binary data are big endian
-	class VtkStream {
+	template <class T> const char* vtkTypeName();
+	template <> const char* vtkTypeName<float>() { return "Float32"; }
+	template <> const char* vtkTypeName<int32_t>() { return "Int32"; }
+	template <> const char* vtkTypeName<int64_t>() { return "Int64"; }
+	template <> const char* vtkTypeName<uint8_t>() { return "UInt8"; }
+
+	// VTK XML writer, binary data are appended raw (little endian, 64 bit sizes), optionally
+	// compressed by zlib in independent blocks; the arrays are kept in memory until save
+	class VtkXml {
 	public:
-		ofstream os;
-		bool binary;
-		VtkStream(const string& name, bool binary) : os(name, ios::out | ios::binary), binary(binary) {
-			os << "# vtk DataFile Version 2.6\noutput file\n" << (binary ? "BINARY" : "ASCII") << "\n";
-		}
-		static void swap4(char* p) {
-			swap(p[0], p[3]);
-			swap(p[1], p[2]);
-		}
-		void floats(const vector<float>& v, int perLine) {
-			if (binary) {
-				vector<float> t(v);
-				for (float& x : t) {
-					swap4((char*)&x);
+		bool binary, compress;
+		VtkXml(bool binary, bool compress) : binary(binary), compress(binary && compress) {}
+
+		// section is Points, Cells, Polys or CellData
+		template <class T> void add(const string& section, const string& name, const vector<T>& v, int nComp) {
+			Array a;
+			a.section = section;
+			a.header = string("<DataArray type=\"") + vtkTypeName<T>() + "\"" + (name.empty() ? "" : " Name=\"" + name + "\"") +
+				" NumberOfComponents=\"" + std::to_string(nComp) + "\"";
+			if (!binary) {
+				ostringstream os;
+				for (size_t i = 0; i < v.size(); i++) {
+					os << +v[i] << (((i + 1) % nComp == 0) ? "\n" : " ");
 				}
-				os.write((const char*)t.data(), t.size() * sizeof(float));
-				os << "\n";
+				a.ascii = os.str();
 			}
 			else {
-				for (size_t i = 0; i < v.size(); i++) {
-					os << v[i] << (((i + 1) % perLine == 0) ? "\n" : " ");
+				encode((const uint8_t*)v.data(), v.size() * sizeof(T), a.data);
+			}
+			arrays.push_back(std::move(a));
+		}
+
+		// dataType is UnstructuredGrid or PolyData, pieceAttributes the sizes of the piece
+		void save(const string& fileName, const string& dataType, const string& pieceAttributes) {
+			ofstream os(fileName, ios::out | ios::binary);
+			os << "<?xml version=\"1.0\"?>\n<VTKFile type=\"" << dataType << "\" version=\"1.0\" byte_order=\"LittleEndian\" header_type=\"UInt64\"";
+			if (compress) {
+				os << " compressor=\"vtkZLibDataCompressor\"";
+			}
+			os << ">\n<" << dataType << ">\n<Piece " << pieceAttributes << ">\n";
+			vector<string> sections;
+			for (auto& a : arrays) {
+				if (find(sections.begin(), sections.end(), a.section) == sections.end()) {
+					sections.push_back(a.section);
 				}
+			}
+			uint64_t offset = 0;
+			for (auto& s : sections) {
+				os << "<" << s << ">\n";
+				for (auto& a : arrays) {
+					if (a.section == s) {
+						if (binary) {
+							os << a.header << " format=\"appended\" offset=\"" << offset << "\"/>\n";
+							offset += a.data.size();
+						}
+						else {
+							os << a.header << " format=\"ascii\">\n" << a.ascii << "</DataArray>\n";
+						}
+					}
+				}
+				os << "</" << s << ">\n";
+			}
+			os << "</Piece>\n</" << dataType << ">\n";
+			if (binary) {
+				os << "<AppendedData encoding=\"raw\">\n_";
+				for (auto& a : arrays) {
+					os.write((const char*)a.data.data(), a.data.size());
+				}
+				os << "\n</AppendedData>\n";
+			}
+			os << "</VTKFile>\n";
+		}
+
+	private:
+		struct Array {
+			string section, header, ascii;
+			vector<uint8_t> data;
+		};
+		vector<Array> arrays;
+
+		static void put64(vector<uint8_t>& out, uint64_t v) {
+			for (int b = 0; b < 8; b++) {
+				out.push_back((uint8_t)(v >> (8 * b)));
 			}
 		}
-		void ints(const vector<int32_t>& v, int perLine) {
-			if (binary) {
-				vector<int32_t> t(v);
-				for (int32_t& x : t) {
-					swap4((char*)&x);
-				}
-				os.write((const char*)t.data(), t.size() * sizeof(int32_t));
-				os << "\n";
+
+		void encode(const uint8_t* p, size_t n, vector<uint8_t>& out) {
+			if (!compress) {
+				put64(out, n);
+				out.insert(out.end(), p, p + n);
+				return;
 			}
-			else {
-				for (size_t i = 0; i < v.size(); i++) {
-					os << v[i] << (((i + 1) % perLine == 0) ? "\n" : " ");
-				}
+			// header: number of blocks, block size, size of the partial last block (0 = full), compressed sizes
+			const size_t bs = 1 << 20;
+			long long nb = (long long)((n + bs - 1) / bs);
+			vector<vector<uint8_t> > blocks(nb);
+#pragma omp parallel for schedule(dynamic)
+			for (long long b = 0; b < nb; b++) {
+				blocks[b] = zlibCompress(p + b * bs, min(bs, n - b * bs));
+			}
+			put64(out, nb);
+			put64(out, bs);
+			put64(out, n % bs);
+			for (auto& b : blocks) {
+				put64(out, b.size());
+			}
+			for (auto& b : blocks) {
+				out.insert(out.end(), b.begin(), b.end());
 			}
 		}
 	};
 
-	// hexahedral cells of the selected cells of all blocks
+	// hexahedral cells of the selected cells of all blocks, only the points used by the cells
 	// coordinates are in the cells of the level 0
-	void writeHexaGrid(VtkStream& vtk, Block** blocks, int* blockId, int nBlock, bool selectBoundary, long long& nc) {
-		vector<float> pts;
-		for (int b = 0; b < nBlock; b++) {
-			Block* bl = blocks[blockId[b]];
-			double h = 1.0 / (1 << bl->level);
-			for (int k = 0; k < bl->nk + 1; k++) {
-				for (int j = 0; j < bl->nj + 1; j++) {
-					for (int i = 0; i < bl->ni + 1; i++) {
-						pts.push_back((float)(h * (i + bl->ni * bl->bc[0])));
-						pts.push_back((float)(h * (j + bl->nj * bl->bc[1])));
-						pts.push_back((float)(h * (k + bl->nk * bl->bc[2])));
-					}
-				}
-			}
-		}
-		vtk.os << "DATASET UNSTRUCTURED_GRID\nPOINTS " << pts.size() / 3 << " float\n";
-		vtk.floats(pts, 3);
-		vtk.os << "\n";
-
+	void addHexaGrid(VtkXml& vtk, Block** blocks, int* blockId, int nBlock, bool selectBoundary, long long& np, long long& nc) {
 		int ei[8] = { 0, 1, 1, 0, 0, 1, 1, 0 };
 		int ej[8] = { 0, 0, 1, 1, 0, 0, 1, 1 };
 		int ek[8] = { 0, 0, 0, 0, 1, 1, 1, 1 };
-		vector<int32_t> cells;
+		vector<float> pts;
+		vector<int32_t> cells, pointId;
+		np = 0;
 		nc = 0;
-		long long blInd = 0;
 		for (int b = 0; b < nBlock; b++) {
 			Block* bl = blocks[blockId[b]];
 			int ni = bl->ni, nj = bl->nj, nk = bl->nk;
+			double h = 1.0 / (1 << bl->level);
+			auto corner = [&](int i, int j, int k, int p) { return ((ni + 1) * (nj + 1)) * (k + ek[p]) + (ni + 1) * (j + ej[p]) + i + ei[p]; };
+			pointId.assign((ni + 1) * (nj + 1) * (nk + 1), -1);
+			for (int ind = 0; ind < ni * nj * nk; ind++) {
+				if (bl->boundary[ind] == selectBoundary) {
+					int i = ind % ni, j = (ind / ni) % nj, k = ind / (ni * nj);
+					for (int p = 0; p < 8; p++) {
+						pointId[corner(i, j, k, p)] = 0;
+					}
+				}
+			}
+			for (int k = 0; k < nk + 1; k++) {
+				for (int j = 0; j < nj + 1; j++) {
+					for (int i = 0; i < ni + 1; i++) {
+						int32_t& id = pointId[((ni + 1) * (nj + 1)) * k + (ni + 1) * j + i];
+						if (id == 0) {
+							if (np >= numeric_limits<int32_t>::max()) {
+								throw runtime_error("too many points for the VTK output");
+							}
+							id = (int32_t)np++;
+							pts.push_back((float)(h * (i + ni * bl->bc[0])));
+							pts.push_back((float)(h * (j + nj * bl->bc[1])));
+							pts.push_back((float)(h * (k + nk * bl->bc[2])));
+						}
+					}
+				}
+			}
 			for (int i = 0; i < ni; i++) {
 				for (int j = 0; j < nj; j++) {
 					for (int k = 0; k < nk; k++) {
 						int ind = (ni * nj) * k + ni * j + i;
 						if (bl->boundary[ind] == selectBoundary) {
-							cells.push_back(8);
 							for (int p = 0; p < 8; p++) {
-								cells.push_back((int32_t)(((ni + 1) * (nj + 1)) * (k + ek[p]) + (ni + 1) * (j + ej[p]) + i + ei[p] + blInd));
+								cells.push_back(pointId[corner(i, j, k, p)]);
 							}
 							nc++;
 						}
 					}
 				}
 			}
-			blInd += (ni + 1) * (nj + 1) * (nk + 1);
 		}
-		vtk.os << "CELLS " << nc << " " << 9 * nc << "\n";
-		vtk.ints(cells, 9);
-		vtk.os << "\nCELL_TYPES " << nc << "\n";
-		vtk.ints(vector<int32_t>(nc, 12), 1);
-		vtk.os << "\n";
+		vtk.add("Points", "", pts, 3);
+		vtk.add("Cells", "connectivity", cells, 1);
+		if (8 * nc <= numeric_limits<int32_t>::max()) {
+			vector<int32_t> offsets(nc);
+			for (long long c = 0; c < nc; c++) {
+				offsets[c] = (int32_t)(8 * (c + 1));
+			}
+			vtk.add("Cells", "offsets", offsets, 1);
+		}
+		else {
+			vector<int64_t> offsets(nc);
+			for (long long c = 0; c < nc; c++) {
+				offsets[c] = 8 * (c + 1);
+			}
+			vtk.add("Cells", "offsets", offsets, 1);
+		}
+		vtk.add("Cells", "types", vector<uint8_t>(nc, 12), 1);
 	}
 
-	// iterates over the selected cells in the order of writeHexaGrid
+	string pieceSize(long long np, long long nc) {
+		return "NumberOfPoints=\"" + std::to_string(np) + "\" NumberOfCells=\"" + std::to_string(nc) + "\"";
+	}
+
+	// iterates over the selected cells in the order of addHexaGrid
 	template <class F> void forCells(Block** blocks, int* blockId, int nBlock, bool selectBoundary, F fn) {
 		for (int b = 0; b < nBlock; b++) {
 			Block* bl = blocks[blockId[b]];
@@ -1559,19 +1655,16 @@ void Mesh::writeResultsToVTK(int iter) {
 		break;
 	}
 
-	string name = outputName("output_", iter, ".vtk");
-	VtkStream vtk(simulPath + "result/" + name, vtkBinary);
-	long long nc;
-	writeHexaGrid(vtk, blocks, blockId, nBlock, false, nc);
-	vtk.os << "CELL_DATA " << nc << "\n";
+	string name = outputName("output_", iter, ".vtu");
+	VtkXml vtk(vtkBinary, compressResults);
+	long long np, nc;
+	addHexaGrid(vtk, blocks, blockId, nBlock, false, np, nc);
 
 	auto scalar = [&](const string& fieldName, auto fn) {
 		vector<float> v;
 		v.reserve(nc);
 		forCells(blocks, blockId, nBlock, false, [&](Block* b, int ind) { v.push_back((float)fn(b, ind)); });
-		vtk.os << "SCALARS " << fieldName << " float 1\nLOOKUP_TABLE default\n";
-		vtk.floats(v, 1);
-		vtk.os << "\n";
+		vtk.add("CellData", fieldName, v, 1);
 	};
 	auto vector3 = [&](const string& fieldName, auto fn) {
 		vector<float> v;
@@ -1583,9 +1676,7 @@ void Mesh::writeResultsToVTK(int iter) {
 			v.push_back((float)a[1]);
 			v.push_back((float)a[2]);
 		});
-		vtk.os << "VECTORS " << fieldName << " float\n";
-		vtk.floats(v, 3);
-		vtk.os << "\n";
+		vtk.add("CellData", fieldName, v, 3);
 	};
 
 	vector3("rychlost", [](Block* b, int ind, double* a) {
@@ -1664,7 +1755,7 @@ void Mesh::writeResultsToVTK(int iter) {
 			scalar("viscosity", [](Block* b, int ind) { return FSB(b)->viscosity[ind]; });
 		}
 	}
-	vtk.os.close();
+	vtk.save(simulPath + "result/" + name, "UnstructuredGrid", pieceSize(np, nc));
 
 	vtkFiles.push_back(make_pair(iter * getCt(), name));
 	writePvd("output.pvd", vtkFiles);
@@ -1685,7 +1776,8 @@ void Mesh::writeFieldsBinary(int iter) {
 	auto i32 = [&](int32_t v) { os.write((const char*)&v, 4); };
 	auto f64 = [&](double v) { os.write((const char*)&v, 8); };
 	os.write("LBMF", 4);
-	i32(maxLevel > 0 ? 2 : 1); // version 2 adds the level of the blocks
+	// version 2 adds the level of the blocks, version 3 compresses the block data into one raw deflate stream
+	i32(compressResults ? 3 : (maxLevel > 0 ? 2 : 1));
 	i32(iter);
 	f64(iter * b0->Ct);
 	i32(problemID);
@@ -1700,14 +1792,17 @@ void Mesh::writeFieldsBinary(int iter) {
 		strncpy(buf, n.c_str(), 15);
 		os.write(buf, 16);
 	}
+	vector<uint8_t> body;
+	auto put = [&](const void* p, size_t n) { body.insert(body.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
+	auto bi32 = [&](int32_t v) { put(&v, 4); };
 	vector<float> data(ni * nj * nk);
 	for (int b = 0; b < nBlock; b++) {
 		Block* bl = blocks[blockId[b]];
-		i32(blockIndex[b][0]);
-		i32(blockIndex[b][1]);
-		i32(blockIndex[b][2]);
-		if (maxLevel > 0) {
-			i32(blockLevel[b]);
+		bi32(blockIndex[b][0]);
+		bi32(blockIndex[b][1]);
+		bi32(blockIndex[b][2]);
+		if (maxLevel > 0 || compressResults) {
+			bi32(blockLevel[b]);
 		}
 		for (size_t fld = 0; fld < names.size(); fld++) {
 			double u[3];
@@ -1737,20 +1832,26 @@ void Mesh::writeFieldsBinary(int iter) {
 				}
 				data[ind] = (float)v;
 			}
-			os.write((const char*)data.data(), data.size() * sizeof(float));
+			put(data.data(), data.size() * sizeof(float));
 		}
+	}
+	if (compressResults) {
+		vector<uint8_t> z = deflateParallel(body.data(), body.size());
+		os.write((const char*)z.data(), z.size());
+	}
+	else {
+		os.write((const char*)body.data(), body.size());
 	}
 }
 
 void Mesh::writeBoundaryToVTK() {
-	VtkStream vtk(simulPath + "result/boundary.vtk", vtkBinary);
-	long long nc;
-	writeHexaGrid(vtk, blocks, blockId, nBlock, true, nc);
-	vtk.os << "CELL_DATA " << nc << "\nSCALARS cell_type float 1\nLOOKUP_TABLE default\n";
+	VtkXml vtk(vtkBinary, compressResults);
+	long long np, nc;
+	addHexaGrid(vtk, blocks, blockId, nBlock, true, np, nc);
 	vector<float> v;
 	forCells(blocks, blockId, nBlock, true, [&](Block* b, int ind) { v.push_back((float)b->cellType[ind]); });
-	vtk.floats(v, 1);
-	vtk.os << "\n";
+	vtk.add("CellData", "cell_type", v, 1);
+	vtk.save(simulPath + "result/boundary.vtu", "UnstructuredGrid", pieceSize(np, nc));
 }
 
 void Mesh::writeFreeSurfaceToVTK(int iter) {
@@ -1810,8 +1911,8 @@ void Mesh::writeFreeSurfaceToVTK(int iter) {
 		}
 	}
 
-	string name = outputName("outputFS_", iter, ".vtk");
-	VtkStream vtk(simulPath + "result/" + name, vtkBinary);
+	string name = outputName("outputFS_", iter, ".vtp");
+	VtkXml vtk(vtkBinary, compressResults);
 	long long ntri = (long long)tri.size();
 	vector<float> pts;
 	pts.reserve(9 * ntri);
@@ -1822,21 +1923,18 @@ void Mesh::writeFreeSurfaceToVTK(int iter) {
 			pts.push_back((float)t.p[v].z);
 		}
 	}
-	vtk.os << "DATASET UNSTRUCTURED_GRID\nPOINTS " << ntri * 3 << " float\n";
-	vtk.floats(pts, 3);
-	vtk.os << "\nCELLS " << ntri << " " << 4 * ntri << "\n";
-	vector<int32_t> cells;
-	cells.reserve(4 * ntri);
+	vector<int32_t> cells(3 * ntri), offsets(ntri);
 	for (long long t = 0; t < ntri; t++) {
-		cells.push_back(3);
-		cells.push_back((int32_t)(3 * t));
-		cells.push_back((int32_t)(3 * t + 1));
-		cells.push_back((int32_t)(3 * t + 2));
+		for (int v = 0; v < 3; v++) {
+			cells[3 * t + v] = (int32_t)(3 * t + v);
+		}
+		offsets[t] = (int32_t)(3 * (t + 1));
 	}
-	vtk.ints(cells, 4);
-	vtk.os << "\nCELL_TYPES " << ntri << "\n";
-	vtk.ints(vector<int32_t>(ntri, 5), 1);
-	vtk.os.close();
+	vtk.add("Points", "", pts, 3);
+	vtk.add("Polys", "connectivity", cells, 1);
+	vtk.add("Polys", "offsets", offsets, 1);
+	vtk.save(simulPath + "result/" + name, "PolyData", "NumberOfPoints=\"" + std::to_string(3 * ntri) +
+		"\" NumberOfVerts=\"0\" NumberOfLines=\"0\" NumberOfStrips=\"0\" NumberOfPolys=\"" + std::to_string(ntri) + "\"");
 
 	vtkFsFiles.push_back(make_pair(iter * getCt(), name));
 	writePvd("outputFS.pvd", vtkFsFiles);

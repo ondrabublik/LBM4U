@@ -12,6 +12,7 @@ option(LBM_BUILD_TESTS "Build the unit tests" ON)
 
 set(CORE_SOURCES
 	Collision.cpp
+	Deflate.cpp
 	Block.cpp
 	BlockBasic.cpp
 	BlockFreeSurface.cpp
