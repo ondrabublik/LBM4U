@@ -10,8 +10,8 @@
 
 using namespace std;
 
-BlockBasic::BlockBasic(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, int collisionModel, bool isTauVariable, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par) {
-	initCommon(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, coarseLevel, indAll, indIn, indBound, collisionModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+BlockBasic::BlockBasic(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int level, int* indAll, int* indIn, int* indBound, int collisionModel, bool isTauVariable, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par) {
+	initCommon(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 }
 
 BlockBasic::~BlockBasic() {
@@ -110,6 +110,24 @@ void BlockBasic::propagation() {
 	}
 }
 
+void BlockBasic::propagateCells(const vector<int>& cells) {
+	for (int ind : cells) {
+		if (boundary[ind]) {
+			continue;
+		}
+		for (int p = 0; p < nf; p++) {
+			int bl, loc;
+			int ct = neighbourType(ind, p, bl, loc);
+			if (ct == CT_FLUID) {
+				f[nf * ind + opp[p]] = blocks[bl]->fc[nf * loc + opp[p]];
+			}
+			else {
+				f[nf * ind + opp[p]] = (pop_t)boundaryIncoming(ind, p, ct);
+			}
+		}
+	}
+}
+
 void BlockBasic::makro() {
 	double u[3];
 	for (int i = 0; i < nAll; i++) {
@@ -146,7 +164,7 @@ void BlockBasic::initZeroCondition() {
 }
 
 void BlockBasic::readInitCondition(int id, string simulPath) {
-	string fileName = simulPath + "init/blockInit" + std::to_string(id) + ".txt";
+	string fileName = simulPath + "init/blockInit" + fileTag + ".txt";
 	ifstream myfile(fileName);
 	if (!myfile.is_open()) {
 		return; // zero condition stays

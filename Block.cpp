@@ -33,6 +33,7 @@ Block::~Block() {
 	delete[] nbIndex;
 	delete[] nbBlockTab;
 	delete[] nbLocalTab;
+	delete[] massCorr;
 }
 
 bool Block::isInterior(int i, int j, int k, int ni, int nj, int nk) {
@@ -57,9 +58,9 @@ void Block::countCells(int ni, int nj, int nk, int& nIn, int& nBound) {
 	nBound = ni * nj * nk - nIn;
 }
 
-void Block::initCommon(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, int collisionModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par) {
-	if (coarseLevel != 1) {
-		throw invalid_argument("grid refinement (coarseLevel != 1) is not implemented");
+void Block::initCommon(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int level, int* indAll, int* indIn, int* indBound, int collisionModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par) {
+	if (level < 0 || level > 15) {
+		throw invalid_argument("refinement level has to be between 0 and 15");
 	}
 	this->blocks = blocks;
 	this->nBlock = nBlock;
@@ -75,7 +76,7 @@ void Block::initCommon(bool isFirst, Block** blocks, int nBlock, int nBlockMax, 
 	this->nBj = nBj;
 	this->nBk = nBk;
 	this->indBlock = indBlock;
-	this->coarseLevel = coarseLevel;
+	this->level = level;
 	this->indIn = indIn;
 	this->indBound = indBound;
 	this->indAll = indAll;
@@ -95,7 +96,7 @@ void Block::initCommon(bool isFirst, Block** blocks, int nBlock, int nBlockMax, 
 	}
 
 	Cu = getParDouble("uMax", par, true, 0) / 0.1;
-	Ch = getParDouble("H", par, true, 0) / ni;
+	Ch = getParDouble("H", par, true, 0) / ni / (1 << level); // acoustic scaling, Ct ~ Ch
 	Ct = Ch / Cu;
 	Crho = getParDouble("density", par, true, 0);
 	Cp = Crho / 3 * Cu * Cu;
@@ -162,64 +163,65 @@ void Block::initCommon(bool isFirst, Block** blocks, int nBlock, int nBlockMax, 
 	}
 }
 
+bool BlockGrid::wrap(int level, int& bi, int& bj, int& bk) const {
+	int n[3] = { nBi << level, nBj << level, nBk << level };
+	int* c[3] = { &bi, &bj, &bk };
+	for (int d = 0; d < 3; d++) {
+		int& v = *c[d];
+		if (v < 0 || v >= n[d]) {
+			if (!periodic[d]) {
+				return false;
+			}
+			v = ((v % n[d]) + n[d]) % n[d];
+		}
+	}
+	return true;
+}
+
+int BlockGrid::find(int level, int bi, int bj, int bk) const {
+	if (!wrap(level, bi, bj, bk)) {
+		return -1;
+	}
+	if (level == 0) {
+		return (nBi * nBj) * bk + nBi * bj + bi;
+	}
+	auto it = slots.find(key(level, bi, bj, bk));
+	return it == slots.end() ? -1 : it->second;
+}
+
+// block and local index of the cell shifted by (ex, ey, ez) cells of the level of this block
+// (indBlock is the slot of this block, kept for the callers)
 void Block::local2globalShift(int indBlock, int ind, int& indBlockNeigh, int& indLocalNeigh, int ex, int ey, int ez) {
 	int k = ind / (ni * nj) + ez;
 	int pom = ind % (ni * nj);
 	int j = pom / ni + ey;
 	int i = pom % ni + ex;
-
-	int kB = indBlock / (nBi * nBj);
-	pom = indBlock % (nBi * nBj);
-	int jB = pom / nBi;
-	int iB = pom % nBi;
-
+	int iB = bc[0], jB = bc[1], kB = bc[2];
 	while (i < 0) {
 		i += ni;
 		iB--;
-		if (xPeriodicity && iB == -1) {
-			iB = nBi - 1;
-		}
 	}
 	while (i >= ni) {
 		i -= ni;
 		iB++;
-		if (xPeriodicity && iB == nBi) {
-			iB = 0;
-		}
 	}
 	while (j < 0) {
 		j += nj;
 		jB--;
-		if (yPeriodicity && jB == -1) {
-			jB = nBj - 1;
-		}
 	}
 	while (j >= nj) {
 		j -= nj;
 		jB++;
-		if (yPeriodicity && jB == nBj) {
-			jB = 0;
-		}
 	}
 	while (k < 0) {
 		k += nk;
 		kB--;
-		if (zPeriodicity && kB == -1) {
-			kB = nBk - 1;
-		}
 	}
 	while (k >= nk) {
 		k -= nk;
 		kB++;
-		if (zPeriodicity && kB == nBk) {
-			kB = 0;
-		}
 	}
-
-	indBlockNeigh = nBi * nBj * kB + nBi * jB + iB;
-	if (iB < 0 || iB >= nBi || jB < 0 || jB >= nBj || kB < 0 || kB >= nBk) {
-		indBlockNeigh = -1;
-	}
+	indBlockNeigh = grid->find(level, iB, jB, kB);
 	indLocalNeigh = ni * nj * k + ni * j + i;
 }
 
@@ -255,8 +257,7 @@ int Block::neighbourType(int ind, int dir, int& bl, int& loc) const {
 		bl = -1;
 		if (movingLidTop && ez[dir] > 0) {
 			int k = ind / (ni * nj);
-			int kB = indBlock / (nBi * nBj);
-			if (k == nk - 1 && kB == nBk - 1) {
+			if (k == nk - 1 && bc[2] == (nBk << level) - 1) {
 				return CT_MOVING;
 			}
 		}
@@ -301,7 +302,7 @@ void Block::initBoundary(int id, string geomPath) {
 		boundary[ind] = false;
 		cellType[ind] = CT_FLUID;
 	}
-	string fileName = geomPath + "mesh/boundary/blockBoundary" + std::to_string(id) + ".txt";
+	string fileName = geomPath + "mesh/boundary/blockBoundary" + fileTag + ".txt";
 	ifstream myfile(fileName);
 	if (!myfile.is_open()) {
 		return; // no boundary file: the whole block is fluid
@@ -361,6 +362,10 @@ void Block::propagation()
 {
 }
 
+void Block::propagateCells(const vector<int>& cells)
+{
+}
+
 void Block::collision()
 {
 }
@@ -373,6 +378,49 @@ void Block::outputVelocity(int ind, double* u) {
 	u[0] = U[ind];
 	u[1] = V[ind];
 	u[2] = W[ind];
+}
+
+void Block::prolongCell(int ind, const Block* src, int sInd) {
+	Rho[ind] = src->Rho[sInd];
+	dRho[ind] = src->dRho[sInd];
+	U[ind] = src->U[sInd];
+	V[ind] = src->V[sInd];
+	W[ind] = src->W[sInd];
+	for (int p = 0; p < nf; p++) {
+		fc[nf * ind + p] = src->fc[nf * sInd + p];
+	}
+}
+
+void Block::restrictCell(int ind, Block* const* src, const int* sInd) {
+	double rho = 0, u = 0, v = 0, w3 = 0;
+	double fsum[27] = { 0 };
+	int count = 0;
+	for (int o = 0; o < 8; o++) {
+		const Block* s = src[o];
+		if (!s || s->boundary[sInd[o]]) {
+			continue;
+		}
+		int si = sInd[o];
+		rho += s->Rho[si];
+		u += s->U[si];
+		v += s->V[si];
+		w3 += s->W[si];
+		for (int p = 0; p < nf; p++) {
+			fsum[p] += s->fc[nf * si + p];
+		}
+		count++;
+	}
+	if (count == 0) {
+		return;
+	}
+	Rho[ind] = rho / count;
+	dRho[ind] = Rho[ind] - rho0;
+	U[ind] = u / count;
+	V[ind] = v / count;
+	W[ind] = w3 / count;
+	for (int p = 0; p < nf; p++) {
+		fc[nf * ind + p] = (pop_t)(fsum[p] / count);
+	}
 }
 
 bool Block::hasPar(const string& quantity, const ParamMap& par) {

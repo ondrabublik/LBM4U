@@ -14,7 +14,9 @@ namespace LBMStudio
             Application.SetCompatibleTextRenderingDefault(false);
             if (args.Length >= 3 && args[0] == "--selftest")
             {
-                return SelfTest.Run(args[1], args[2], args.Length > 3 ? args[3] : null);
+                bool refine = Array.IndexOf(args, "--refine") >= 0;
+                string solver = args.Length > 3 && args[3] != "--refine" ? args[3] : null;
+                return SelfTest.Run(args[1], args[2], solver, refine);
             }
             Application.ThreadException += (s, e) => ShowError(e.Exception);
             Application.Run(new MainForm());
@@ -62,11 +64,12 @@ namespace LBMStudio
 
     /// <summary>
     /// Headless check of the whole chain: STL/STEP import, mesh, simulation, solver run, results and screenshots.
-    /// LBMStudio.exe --selftest &lt;cad file&gt; &lt;output dir&gt; [solver exe]
+    /// LBMStudio.exe --selftest &lt;cad file&gt; &lt;output dir&gt; [solver exe] [--refine]
+    /// (--refine: octree refinement, 2 levels, 10 cells across gaps, inlet above the first quarter of the body in x)
     /// </summary>
     static class SelfTest
     {
-        public static int Run(string cadFile, string outDir, string solver)
+        public static int Run(string cadFile, string outDir, string solver, bool refine = false)
         {
             Directory.CreateDirectory(outDir);
             var log = new StreamWriter(Path.Combine(outDir, "selftest.log")) { AutoFlush = true };
@@ -92,6 +95,10 @@ namespace LBMStudio
                 form.SelectGeometryByName(geomName);
                 form.ImportGeometryFile(cadFile);
                 Application.DoEvents();
+                if (refine)
+                {
+                    form.EnableRefinementForTest();
+                }
                 form.GenerateMeshSync();
                 log.WriteLine("mesh generated");
                 form.Screenshot(Path.Combine(outDir, "tab_geometry.png"), 0);
@@ -140,6 +147,16 @@ namespace LBMStudio
             RefreshSimulationList(name);
             tabs.SelectedIndex = 1;
             Application.DoEvents();
+        }
+
+        public void EnableRefinementForTest()
+        {
+            chkRefine.Checked = true;
+            cbMaxLevel.SelectedIndex = 1;
+            tbGapCells.Text = "10";
+            tbInletU.Text = Fmt.G(mesh.Min.X + 0.2 * (mesh.Max.X - mesh.Min.X), 6);
+            tbInletR.Text = Fmt.G(0.1 * (mesh.Max.Y - mesh.Min.Y), 3);
+            chkShowBlocks.Checked = true;
         }
 
         public void Screenshot(string file, int tab)

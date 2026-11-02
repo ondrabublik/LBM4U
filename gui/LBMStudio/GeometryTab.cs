@@ -12,6 +12,9 @@ namespace LBMStudio
     {
         TextBox tbSource, tbMargin, tbDx;
         ComboBox cbUnits, cbBlock;
+        CheckBox chkRefine;
+        ComboBox cbMaxLevel, cbWallLevel;
+        TextBox tbGapCells, tbCurvCells;
         RadioButton rbInside, rbOutside;
         Label lblGeomInfo, lblMeshEstimate;
         CheckBox chkInlet, chkOutlet;
@@ -27,6 +30,7 @@ namespace LBMStudio
         TrackBar tbMeshCut;
         Label lblMeshCut;
         byte[] meshTypes;               // cell types of the displayed mesh, loaded on demand
+        OctreeMesh meshTree;            // blocks of a refined mesh, loaded on demand
         System.Windows.Media.Media3D.Model3D cellsModel, blocksModel; // cached, rebuilt when the mesh or the cut changes
         bool updatingMeshCut;
 
@@ -70,6 +74,18 @@ namespace LBMStudio
             var tMesh = FieldTable();
             tbDx = AddRow(tMesh, "Velikost buňky dx", Num("0.002"), "m");
             cbBlock = AddRow(tMesh, "Velikost bloku", Combo("16", "8", "32"), "buněk");
+            chkRefine = new CheckBox { Text = "Zahušťování podle geometrie (octree)", AutoSize = true };
+            tMesh.Controls.Add(chkRefine);
+            tMesh.SetColumnSpan(chkRefine, 3);
+            cbMaxLevel = AddRow(tMesh, "Nejvyšší úroveň zjemnění", Combo("1", "2", "3", "4"), "dx / 2^L");
+            tbGapCells = AddRow(tMesh, "Buněk přes nejužší mezeru", Num("10"));
+            tbCurvCells = AddRow(tMesh, "Buněk na poloměr zakřivení", Num("0"), "0 = vyp.");
+            cbWallLevel = AddRow(tMesh, "Úroveň u všech stěn", Combo("0", "1", "2", "3", "4"));
+            cbMaxLevel.SelectedIndex = 1;
+            cbWallLevel.SelectedIndex = 0;
+            chkRefine.CheckedChanged += (s, e) => { UpdateRefineControls(); UpdateGeometryPreview(); };
+            cbMaxLevel.SelectedIndexChanged += (s, e) => UpdateGeometryPreview();
+            UpdateRefineControls();
             lblMeshEstimate = new Label { AutoSize = true, ForeColor = Color.DimGray, MaximumSize = new Size(390, 0) };
             tMesh.Controls.Add(lblMeshEstimate);
             tMesh.SetColumnSpan(lblMeshEstimate, 3);
@@ -185,6 +201,14 @@ namespace LBMStudio
             return page;
         }
 
+        void UpdateRefineControls()
+        {
+            foreach (Control c in new Control[] { cbMaxLevel, tbGapCells, tbCurvCells, cbWallLevel })
+            {
+                c.Enabled = chkRefine.Checked;
+            }
+        }
+
         void LogGeom(string text)
         {
             geomLog.AppendText(text + Environment.NewLine);
@@ -201,6 +225,12 @@ namespace LBMStudio
             tbMargin.Text = Fmt.D(geom.Margin);
             tbDx.Text = Fmt.D(geom.Dx);
             cbBlock.SelectedItem = geom.BlockSize.ToString();
+            chkRefine.Checked = geom.Refine;
+            cbMaxLevel.SelectedIndex = Math.Max(0, Math.Min(cbMaxLevel.Items.Count - 1, geom.MaxLevel - 1));
+            tbGapCells.Text = Fmt.D(geom.GapCells);
+            tbCurvCells.Text = Fmt.D(geom.CurvatureCells);
+            cbWallLevel.SelectedIndex = Math.Max(0, Math.Min(cbWallLevel.Items.Count - 1, geom.WallLevel));
+            UpdateRefineControls();
             chkInlet.Checked = geom.Inlet.Enabled;
             cbInletFace.SelectedIndex = (int)geom.Inlet.Face;
             tbInletU.Text = Fmt.D(geom.Inlet.U);
@@ -234,6 +264,15 @@ namespace LBMStudio
             geom.Margin = D(tbMargin, "Okraj");
             geom.Dx = D(tbDx, "Velikost buňky");
             geom.BlockSize = int.Parse((string)cbBlock.SelectedItem);
+            geom.Refine = chkRefine.Checked;
+            geom.MaxLevel = cbMaxLevel.SelectedIndex + 1;
+            geom.GapCells = D(tbGapCells, "Buněk přes mezeru");
+            geom.CurvatureCells = D(tbCurvCells, "Buněk na poloměr zakřivení");
+            geom.WallLevel = cbWallLevel.SelectedIndex;
+            if (geom.Refine && geom.GapCells <= 0 && geom.CurvatureCells <= 0 && geom.WallLevel == 0)
+            {
+                throw new FormatException("Zahušťování nemá žádné kritérium – zadejte počet buněk přes mezeru, na poloměr zakřivení nebo úroveň u stěn.");
+            }
             geom.Inlet = new PortSpec { Enabled = chkInlet.Checked, Face = (Face)cbInletFace.SelectedIndex, U = D(tbInletU, "Vtok – souřadnice 1"), V = D(tbInletV, "Vtok – souřadnice 2"), Radius = D(tbInletR, "Vtok – poloměr"), Value = D(tbInletVel, "Vtok – rychlost") };
             geom.Outlet = new PortSpec { Enabled = chkOutlet.Checked, Face = (Face)cbOutletFace.SelectedIndex, U = D(tbOutletU, "Výtok – souřadnice 1"), V = D(tbOutletV, "Výtok – souřadnice 2"), Radius = D(tbOutletR, "Výtok – poloměr"), Value = D(tbOutletP, "Výtok – tlak") };
             geom.Gravity = new Vec3(D(tbGx, "gx"), D(tbGy, "gy"), D(tbGz, "gz"));
@@ -381,6 +420,11 @@ namespace LBMStudio
                 double cells = Math.Ceiling(s.X / dx + 2) * Math.Ceiling(s.Y / dx + 2) * Math.Ceiling(s.Z / dx + 2);
                 lblMeshEstimate.Text = string.Format("Mřížka přibližně {0} × {1} × {2} = {3:N0} buněk",
                     Math.Ceiling(s.X / dx + 2), Math.Ceiling(s.Y / dx + 2), Math.Ceiling(s.Z / dx + 2), cells);
+                if (chkRefine.Checked)
+                {
+                    int lmax = cbMaxLevel.SelectedIndex + 1;
+                    lblMeshEstimate.Text += string.Format(" na úrovni 0, nejmenší buňka {0} m (úroveň {1})", Fmt.G(dx / (1 << lmax)), lmax);
+                }
             }
             try
             {
@@ -443,7 +487,7 @@ namespace LBMStudio
                     MessageBox.Show(this, msg, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
-                LogGeom("Síť je hotová. Pokračujte na záložce Simulace.");
+                LogGeom("Síť je hotová. Pokračujte na záložce Simulace." + (g.MeshLevels > 1 ? " Bloky v zobrazení mají barvu podle úrovně (0 šedá, 1 modrá, 2 zelená, 3 oranžová, 4 červená)." : ""));
                 SetStatus("Síť: " + g.BlockCount + " bloků, " + g.FluidCells + " buněk tekutiny");
                 ResetMeshDisplay();
                 UpdateMeshLayers();
@@ -467,6 +511,7 @@ namespace LBMStudio
         void ResetMeshDisplay()
         {
             meshTypes = null;
+            meshTree = null;
             cellsModel = null;
             blocksModel = null;
             bool ready = geom != null && geom.MeshReady;
@@ -510,6 +555,15 @@ namespace LBMStudio
                     LogGeom("Soubor mesh/celltypes.bin neodpovídá síti, vytvořte síť znovu.");
                     meshTypes = null;
                 }
+                try
+                {
+                    meshTree = geom.LoadOctree(settings.Workspace);
+                }
+                catch (Exception ex)
+                {
+                    LogGeom("Chyba čtení mesh/octree.bin: " + ex.Message);
+                    meshTree = null;
+                }
             }
             ready = ready && meshTypes != null;
             int axis = cbMeshCut.SelectedIndex - 1;
@@ -527,7 +581,9 @@ namespace LBMStudio
                 Cursor = Cursors.WaitCursor;
                 try
                 {
-                    cellsModel = MeshDisplay.Cells(geom, meshTypes, axis, tbMeshCut.Value, keepUpper, out faces);
+                    cellsModel = meshTree != null
+                        ? MeshDisplay.OctreeCells(geom, meshTree, axis, tbMeshCut.Value, keepUpper, out faces)
+                        : MeshDisplay.Cells(geom, meshTypes, axis, tbMeshCut.Value, keepUpper, out faces);
                 }
                 finally
                 {
@@ -540,7 +596,7 @@ namespace LBMStudio
             }
             if (ready && chkShowBlocks.Checked && blocksModel == null)
             {
-                blocksModel = MeshDisplay.BlockEdges(geom, meshTypes, Colors.DarkSlateGray);
+                blocksModel = meshTree != null ? MeshDisplay.OctreeBlockEdges(geom, meshTree) : MeshDisplay.BlockEdges(geom, meshTypes, Colors.DarkSlateGray);
             }
             geomView.SetLayer("cells", ready && chkShowCells.Checked ? cellsModel : null);
             geomView.SetLayer("blocks", ready && chkShowBlocks.Checked ? blocksModel : null);

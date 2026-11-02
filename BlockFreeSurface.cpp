@@ -17,6 +17,7 @@ BlockFreeSurface::BlockFreeSurface() {
 	mass = vof = vofS1 = vofS = normal = curvature = nullptr;
 	flagMap = surfaceLevels = filled = emptied = airToFs = fluidToFs = artefact1 = artefact2 = nullptr;
 	fsType = nullptr;
+	massAcc = nullptr;
 	viscosity = shearRate = fluidModelParam = tauCell = nullptr;
 	massErr = massBlock = 0;
 	nFilled = nEmptied = nAirToFs = nFluidToFs = nArtefacts1 = nArtefacts2 = 0;
@@ -28,9 +29,9 @@ BlockFreeSurface::BlockFreeSurface() {
 	surfTension = wetAngleEq = wetAngleAdv = wetAngleRec = 0;
 }
 
-BlockFreeSurface::BlockFreeSurface(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par)
+BlockFreeSurface::BlockFreeSurface(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int level, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par)
 	: BlockFreeSurface() {
-	initCommon(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, coarseLevel, indAll, indIn, indBound, collisionModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	initCommon(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 	initFreeSurface(isFirst, viscosityModel, par);
 }
 
@@ -60,6 +61,7 @@ void BlockFreeSurface::initFreeSurface(bool isFirst, int viscosityModel, const P
 	artefact2 = new int[ntot];
 	surfaceLevels = new int[ntot]();
 	fsType = new unsigned char[ntot]();
+	massAcc = new double[ntot]();
 	tauCell = new double[ntot];
 	for (int i = 0; i < ntot; i++) {
 		tauCell[i] = tau;
@@ -117,6 +119,7 @@ BlockFreeSurface::~BlockFreeSurface() {
 	delete[] artefact2;
 	delete[] surfaceLevels;
 	delete[] fsType;
+	delete[] massAcc;
 	delete[] tauCell;
 	delete[] viscosity;
 	delete[] shearRate;
@@ -213,38 +216,53 @@ void BlockFreeSurface::koernerPopulation(int ind, int p) {
 
 void BlockFreeSurface::propagation() {
 	for (int i = 0; i < nAll; i++) {
-		int ind = indAll[i];
-		if (flagMap[ind] != 1 && flagMap[ind] != 3) {
-			continue;
+		propagateCell(indAll[i]);
+	}
+}
+
+void BlockFreeSurface::propagateCells(const vector<int>& cells) {
+	for (int ind : cells) {
+		propagateCell(ind);
+	}
+}
+
+void BlockFreeSurface::propagateCell(int ind) {
+	if (flagMap[ind] != 1 && flagMap[ind] != 3) {
+		return;
+	}
+	bool isInterface = flagMap[ind] == 3;
+	for (int p = 0; p < nf; p++) {
+		int bl, loc;
+		int ct;
+		if (nbIndex[ind] < 0) {
+			bl = indBlock;
+			loc = ind + offs[p];
+			ct = cellType[loc];
 		}
-		bool isInterface = flagMap[ind] == 3;
-		for (int p = 0; p < nf; p++) {
-			int bl, loc;
-			int ct;
-			if (nbIndex[ind] < 0) {
-				bl = indBlock;
-				loc = ind + offs[p];
-				ct = cellType[loc];
+		else {
+			ct = neighbourType(ind, p, bl, loc);
+		}
+		if (ct == CT_FLUID) {
+			if (FSB(bl)->flagMap[loc] == 2) {
+				koernerPopulation(ind, p);
+				if (flagMap[ind] == 1 && blocks[bl]->ghost != GHOST_NONE && ghost == GHOST_NONE) {
+					// fluid next to gas of another level (its conversion to interface comes later): no mass exchange,
+					// the population sent towards a finer level is already balanced in Mesh::computeLost
+					double fin = f[nf * ind + opp[p]] + w[p] * rho0;
+					massCorr[ind] += (blocks[bl]->ghost == GHOST_FROM_FINER ? 0.0 : fc[nf * ind + p] + w[p] * rho0) - fin;
+				}
+			}
+			else { // standart propagation
+				f[nf * ind + opp[p]] = blocks[bl]->fc[nf * loc + opp[p]];
+			}
+		}
+		else {
+			double weight = normal[3 * ind] * ex[p] + normal[3 * ind + 1] * ey[p] + normal[3 * ind + 2] * ez[p];
+			if (isInterface && weight > 0 && (ct == CT_WALL || ct == CT_MOVING)) {
+				koernerPopulation(ind, p);
 			}
 			else {
-				ct = neighbourType(ind, p, bl, loc);
-			}
-			if (ct == CT_FLUID) {
-				if (FSB(bl)->flagMap[loc] == 2) {
-					koernerPopulation(ind, p);
-				}
-				else { // standart propagation
-					f[nf * ind + opp[p]] = blocks[bl]->fc[nf * loc + opp[p]];
-				}
-			}
-			else {
-				double weight = normal[3 * ind] * ex[p] + normal[3 * ind + 1] * ey[p] + normal[3 * ind + 2] * ez[p];
-				if (isInterface && weight > 0 && (ct == CT_WALL || ct == CT_MOVING)) {
-					koernerPopulation(ind, p);
-				}
-				else {
-					f[nf * ind + opp[p]] = (pop_t)boundaryIncoming(ind, p, ct);
-				}
+				f[nf * ind + opp[p]] = (pop_t)boundaryIncoming(ind, p, ct);
 			}
 		}
 	}
@@ -295,7 +313,7 @@ void BlockFreeSurface::initZeroCondition() {
 }
 
 void BlockFreeSurface::readInitCondition(int id, string simulPath) {
-	string fileName = simulPath + "init/blockInit" + std::to_string(id) + ".txt";
+	string fileName = simulPath + "init/blockInit" + fileTag + ".txt";
 	ifstream myfile(fileName);
 	if (!myfile.is_open()) {
 		cout << "warning: initial condition " << fileName << " not found, block is empty" << endl;
@@ -335,7 +353,7 @@ void BlockFreeSurface::readInitCondition(int id, string simulPath) {
 }
 
 void BlockFreeSurface::writeOutCondition(int id, string simulPath) {
-	string fileName = simulPath + "out/blockInit" + std::to_string(id) + ".txt";
+	string fileName = simulPath + "out/blockInit" + fileTag + ".txt";
 	ofstream myfile(fileName);
 	if (!myfile.is_open()) {
 		cout << "Error: cannot write " << fileName << endl;
@@ -420,6 +438,37 @@ void BlockFreeSurface::computeInterfaceTypes() {
 	}
 }
 
+double BlockFreeSurface::linkExchange(int ind, int p, const BlockFreeSurface* nb, int loc) const {
+	double fout = fc[nf * ind + p];
+	double fin = nb->fc[nf * loc + opp[p]];
+	int nflag = nb->flagMap[loc];
+	if (nflag == 1) {
+		return fin - fout;
+	}
+	if (nflag != 3) {
+		return 0;
+	}
+	// one-sided terms need the unshifted populations
+	double finT = fin + w[p] * rho0;
+	double foutT = fout + w[p] * rho0;
+	double ex = 0;
+	int my = fsType[ind];
+	int other = nb->fsType[loc];
+	if (my == other) {
+		ex = fin - fout;
+	}
+	else if (my == FS_STANDARD) {
+		ex = (other == FS_NO_FLUID) ? finT : -foutT;
+	}
+	else if (my == FS_NO_FLUID) {
+		ex = -foutT;
+	}
+	else { // FS_NO_EMPTY
+		ex = finT;
+	}
+	return ex * (vof[ind] + nb->vof[loc]) / 2;
+}
+
 void BlockFreeSurface::massExchange() {
 	for (int i = 0; i < nAll; i++) {
 		int ind = indAll[i];
@@ -430,47 +479,165 @@ void BlockFreeSurface::massExchange() {
 		for (int p = 1; p < nf; p++) {
 			int bl, loc;
 			int ct = neighbourType(ind, p, bl, loc);
-			double fout = fc[nf * ind + p];
 			if (ct != CT_FLUID) {
 				if (ct != CT_WALL) {
-					dm += boundaryIncoming(ind, p, ct) - fout; // inlet, outlet and moving walls
+					dm += boundaryIncoming(ind, p, ct) - fc[nf * ind + p]; // inlet, outlet and moving walls
 				}
 				continue;
 			}
-			BlockFreeSurface* nb = FSB(bl);
-			int nflag = nb->flagMap[loc];
-			double fin = nb->fc[nf * loc + opp[p]];
-			if (nflag == 1) {
-				dm += fin - fout;
+			if (blocks[bl]->ghost == GHOST_FROM_FINER) {
+				continue; // exchange with a finer level is computed by the finer cells
 			}
-			else if (nflag == 3) {
-				// one-sided terms need the unshifted populations
-				double finT = fin + w[p] * rho0;
-				double foutT = fout + w[p] * rho0;
-				double ex = 0;
-				int my = fsType[ind];
-				int other = nb->fsType[loc];
-				if (my == other) {
-					ex = fin - fout;
-				}
-				else if (my == FS_STANDARD) {
-					ex = (other == FS_NO_FLUID) ? finT : -foutT;
-				}
-				else if (my == FS_NO_FLUID) {
-					ex = -foutT;
-				}
-				else { // FS_NO_EMPTY
-					ex = finT;
-				}
-				dm += ex * (vof[ind] + nb->vof[loc]) / 2;
-			}
+			dm += linkExchange(ind, p, FSB(bl), loc);
 		}
 		mass[ind] += dm;
 	}
 }
 
-void BlockFreeSurface::findSurfaceLevels(int level) {
-	if (level == 1) {
+// mass sent by the other levels: interface cells take it into the mass, fluid cells into the populations
+void BlockFreeSurface::applyMassAcc() {
+	for (int i = 0; i < nAll; i++) {
+		int ind = indAll[i];
+		double dm = massAcc[ind];
+		if (dm == 0) {
+			continue;
+		}
+		massAcc[ind] = 0;
+		if (flagMap[ind] == 3) {
+			mass[ind] += dm;
+		}
+		else if (flagMap[ind] == 1) {
+			massCorr[ind] += dm; // added to the populations after the propagation
+		}
+		else {
+			massErr += dm;
+		}
+	}
+}
+
+// conversions requested by the other levels (cells that changed in the meantime are skipped)
+void BlockFreeSurface::injectPending() {
+	for (int ind : pendingAir) {
+		if (flagMap[ind] == 2 && nAirToFs < ntot) {
+			airToFs[nAirToFs++] = ind;
+		}
+	}
+	for (int ind : pendingFluid) {
+		if (flagMap[ind] == 1 && nFluidToFs < ntot) {
+			fluidToFs[nFluidToFs++] = ind;
+		}
+	}
+	pendingAir.clear();
+	pendingFluid.clear();
+}
+
+int BlockFreeSurface::massExchangeKind(int ind) const {
+	if (boundary[ind]) {
+		return 0;
+	}
+	return flagMap[ind] == 1 ? 1 : (flagMap[ind] == 3 ? 2 : 0);
+}
+
+void BlockFreeSurface::resetGhost() {
+	nFilled = nEmptied = nAirToFs = nFluidToFs = nArtefacts1 = nArtefacts2 = 0;
+	for (int i = 0; i < ntot; i++) {
+		massAcc[i] = 0;
+	}
+}
+
+void BlockFreeSurface::prolongCell(int ind, const Block* src, int sInd) {
+	Block::prolongCell(ind, src, sInd);
+	const BlockFreeSurface* s = (const BlockFreeSurface*)src;
+	flagMap[ind] = s->flagMap[sInd];
+	fsType[ind] = s->fsType[sInd];
+	vof[ind] = s->vof[sInd];
+	vofS[ind] = s->vofS[sInd];
+	vofS1[ind] = s->vofS1[sInd];
+	mass[ind] = s->mass[sInd];
+	curvature[ind] = s->curvature[sInd];
+	surfaceLevels[ind] = s->surfaceLevels[sInd];
+	for (int d = 0; d < 3; d++) {
+		normal[3 * ind + d] = s->normal[3 * sInd + d];
+	}
+}
+
+void BlockFreeSurface::restrictCell(int ind, Block* const* src, const int* sInd) {
+	int nFluid = 0, nGas = 0, nInt = 0, nCells = 0;
+	double v = 0, m = 0, rho = 0, u = 0, vv = 0, ww = 0, curv = 0, n[3] = { 0, 0, 0 };
+	double fsum[27] = { 0 };
+	for (int o = 0; o < 8; o++) {
+		const BlockFreeSurface* s = (const BlockFreeSurface*)src[o];
+		if (!s || s->boundary[sInd[o]]) {
+			continue;
+		}
+		int si = sInd[o];
+		nCells++;
+		int fl = s->flagMap[si];
+		if (fl == 1 || fl == 3) {
+			if (fl == 1) {
+				nFluid++;
+				v += 1;
+				m += s->Rho[si];
+			}
+			else {
+				nInt++;
+				v += min(max(s->vof[si], 0.0), 1.0);
+				m += s->mass[si];
+				curv += s->curvature[si];
+				for (int d = 0; d < 3; d++) {
+					n[d] += s->normal[3 * si + d];
+				}
+			}
+			rho += s->Rho[si];
+			u += s->U[si];
+			vv += s->V[si];
+			ww += s->W[si];
+			for (int p = 0; p < nf; p++) {
+				fsum[p] += s->fc[nf * si + p];
+			}
+		}
+		else {
+			nGas++;
+		}
+	}
+	if (nCells == 0) {
+		flagMap[ind] = 4;
+		return;
+	}
+	if (nFluid == nCells) {
+		flagMap[ind] = 1;
+	}
+	else if (nGas == nCells) {
+		flagMap[ind] = 2;
+	}
+	else {
+		flagMap[ind] = 3;
+	}
+	vof[ind] = v / nCells;
+	vofS[ind] = vofS1[ind] = vof[ind];
+	mass[ind] = m / nCells;
+	curvature[ind] = nInt ? curv / nInt : 0.0;
+	for (int d = 0; d < 3; d++) {
+		normal[3 * ind + d] = nInt ? n[d] / nInt : 0.0;
+	}
+	int nLiq = nFluid + nInt;
+	if (nLiq > 0) {
+		Rho[ind] = rho / nLiq;
+		U[ind] = u / nLiq;
+		V[ind] = vv / nLiq;
+		W[ind] = ww / nLiq;
+		for (int p = 0; p < nf; p++) {
+			fc[nf * ind + p] = (pop_t)(fsum[p] / nLiq);
+		}
+	}
+	else {
+		Rho[ind] = U[ind] = V[ind] = W[ind] = 0;
+	}
+	dRho[ind] = Rho[ind] - rho0;
+}
+
+void BlockFreeSurface::findSurfaceLevels(int surfLevel) {
+	if (surfLevel == 1) {
 		for (int i = 0; i < nAll; i++) {
 			int ind = indAll[i];
 			surfaceLevels[ind] = (flagMap[ind] == 3) ? 1 : 0;
@@ -479,7 +646,7 @@ void BlockFreeSurface::findSurfaceLevels(int level) {
 	else {
 		for (int i = 0; i < nAll; i++) {
 			int ind = indAll[i];
-			if (surfaceLevels[ind] == level - 1) {
+			if (surfaceLevels[ind] == surfLevel - 1) {
 				for (int dir = 1; dir < nf; dir++) {
 					int bl = nbBlock(ind, dir);
 					int loc = nbLocal(ind, dir);
@@ -488,7 +655,7 @@ void BlockFreeSurface::findSurfaceLevels(int level) {
 						if (sl[loc] == 0) {
 							// several threads may write the same value here
 #pragma omp atomic write
-							sl[loc] = level;
+							sl[loc] = surfLevel;
 						}
 					}
 				}
@@ -1159,7 +1326,9 @@ void BlockFreeSurface::redistribute(int ind, double massRedist, int direction) {
 	}
 	for (int ng = 0; ng < countNeigh; ng++) {
 		double dm = (listWi[ng] / wtot) * massRedist;
-		double* m = &FSB(indBlockNeigh[ng])->mass[indNeigh[ng]];
+		BlockFreeSurface* nb = FSB(indBlockNeigh[ng]);
+		// mass for a ghost cell is sent to the level holding the cell
+		double* m = nb->ghost != GHOST_NONE ? &nb->massAcc[indNeigh[ng]] : &nb->mass[indNeigh[ng]];
 #pragma omp atomic
 		*m += dm;
 	}
@@ -1194,6 +1363,7 @@ void BlockFreeSurface::calculMassTotal() {
 	activeCellsNumBlock = 0;
 	for (int i = 0; i < nAll; i++) {
 		int ind = indAll[i];
+		massBlock += massAcc[ind]; // sent by another level, not applied yet
 		if (flagMap[ind] == 3) {
 			massBlock += mass[ind];
 			activeCellsNumBlock++;

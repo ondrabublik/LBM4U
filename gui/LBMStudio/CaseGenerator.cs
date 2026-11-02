@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace LBMStudio
@@ -78,12 +79,22 @@ namespace LBMStudio
         public PortSpec Inlet = new PortSpec { Enabled = true, Face = Face.ZMax, Value = 0.5 };
         public PortSpec Outlet = new PortSpec { Enabled = false, Face = Face.ZMin };
         public Vec3 Gravity = new Vec3(0, 0, -9.81);
+        // octree refinement driven by the geometry (static, only at the mesh generation)
+        public bool Refine;
+        public int MaxLevel = 2;
+        public double GapCells = 10;
+        public double CurvatureCells = 0;
+        public int WallLevel;
 
         // results of the mesh generation
         public bool MeshReady;
         public int Nx, Ny, Nz, NBi, NBj, NBk, BlockCount;
         public Vec3 Origin;
         public long FluidCells, InletCells, OutletCells;
+        /// <summary>number of refinement levels of the generated mesh (1 - uniform)</summary>
+        public int MeshLevels = 1;
+        /// <summary>number of blocks of the levels separated by spaces</summary>
+        public string LevelBlocks = "";
 
         public string Dir(string workspace) { return Path.Combine(workspace, Name); }
         public string StlPath(string workspace) { return Path.Combine(Dir(workspace), "geometry.stl"); }
@@ -104,7 +115,14 @@ namespace LBMStudio
             kv.Set("gx", Gravity.X);
             kv.Set("gy", Gravity.Y);
             kv.Set("gz", Gravity.Z);
+            kv.Set("refine", Refine ? 1 : 0);
+            kv.Set("maxLevel", MaxLevel);
+            kv.Set("gapCells", GapCells);
+            kv.Set("curvatureCells", CurvatureCells);
+            kv.Set("wallLevel", WallLevel);
             kv.Set("meshReady", MeshReady ? 1 : 0);
+            kv.Set("meshLevels", MeshLevels);
+            kv.Set("levelBlocks", LevelBlocks);
             kv.Set("nx", Nx);
             kv.Set("ny", Ny);
             kv.Set("nz", Nz);
@@ -135,7 +153,14 @@ namespace LBMStudio
                 Inlet = PortSpec.Load(kv, "inlet"),
                 Outlet = PortSpec.Load(kv, "outlet"),
                 Gravity = new Vec3(kv.GetDouble("gx"), kv.GetDouble("gy"), kv.GetDouble("gz", -9.81)),
+                Refine = kv.GetInt("refine") != 0,
+                MaxLevel = kv.GetInt("maxLevel", 2),
+                GapCells = kv.GetDouble("gapCells", 10),
+                CurvatureCells = kv.GetDouble("curvatureCells"),
+                WallLevel = kv.GetInt("wallLevel"),
                 MeshReady = kv.GetInt("meshReady") != 0,
+                MeshLevels = Math.Max(1, kv.GetInt("meshLevels", 1)),
+                LevelBlocks = kv.Get("levelBlocks", ""),
                 Nx = kv.GetInt("nx"),
                 Ny = kv.GetInt("ny"),
                 Nz = kv.GetInt("nz"),
@@ -162,6 +187,16 @@ namespace LBMStudio
             string path = Path.Combine(Dir(workspace), "mesh", "celltypes.bin");
             return File.Exists(path) ? File.ReadAllBytes(path) : null;
         }
+
+        /// <summary>Octree of the refined mesh, null for a uniform mesh.</summary>
+        public OctreeMesh LoadOctree(string workspace)
+        {
+            string path = Path.Combine(Dir(workspace), "mesh", "octree.bin");
+            return MeshLevels > 1 && File.Exists(path) ? OctreeMesh.Load(path) : null;
+        }
+
+        /// <summary>Cells of all blocks (all levels).</summary>
+        public long MeshCells { get { return (long)BlockCount * BlockSize * BlockSize * BlockSize; } }
 
         public int GX { get { return NBi * BlockSize; } }
         public int GY { get { return NBj * BlockSize; } }
@@ -217,16 +252,22 @@ namespace LBMStudio
                     }
                 }
             }
-            if (fluid == 0)
+            bool refine = def.Refine && def.MaxLevel > 0;
+            if (fluid == 0 && !refine)
             {
                 throw new InvalidOperationException("Síť neobsahuje žádnou buňku tekutiny. Zkontrolujte jednotky, velikost buňky a uzavřenost geometrie.");
             }
-            log("Buněk tekutiny: " + fluid);
+            log("Buněk tekutiny: " + fluid + (refine ? " (úroveň 0)" : ""));
 
             def.Nx = vg.Nx;
             def.Ny = vg.Ny;
             def.Nz = vg.Nz;
             def.Origin = vg.Origin;
+            if (refine)
+            {
+                GenerateRefined(def, mesh, vg, types, nbi, nbj, nbk, workspace, log);
+                return;
+            }
             def.InletCells = def.Inlet.Enabled ? MarkPort(def, def.Inlet, types, GX, GY, GZ, Inlet) : 0;
             def.OutletCells = def.Outlet.Enabled ? MarkPort(def, def.Outlet, types, GX, GY, GZ, Outlet) : 0;
             if (def.Inlet.Enabled)
@@ -344,9 +385,126 @@ namespace LBMStudio
             }
             File.WriteAllText(Path.Combine(meshDir, "blocks.txt"), blocks.ToString());
             File.WriteAllBytes(Path.Combine(meshDir, "celltypes.bin"), types);
+            File.Delete(Path.Combine(meshDir, "octree.bin"));
             def.BlockCount = count;
+            def.MeshLevels = 1;
+            def.LevelBlocks = count.ToString();
             def.MeshReady = true;
             log("Bloků: " + count + " z " + (nbi * nbj * nbk) + " (" + bs + "³ buněk)");
+            def.Save(workspace);
+        }
+
+        /// <summary>Octree mesh: blocks refined by the geometry criteria, every block voxelized at its level.</summary>
+        static void GenerateRefined(GeometryDef def, StlMesh mesh, VoxelGrid vg, byte[] baseTypes, int nbi, int nbj, int nbk, string workspace, Action<string> log)
+        {
+            var spec = new RefinementSpec { MaxLevel = def.MaxLevel, GapCells = def.GapCells, CurvatureCells = def.CurvatureCells, WallLevel = Math.Min(def.WallLevel, def.MaxLevel) };
+            log("Zahušťování sítě: max. úroveň " + spec.MaxLevel + " (nejmenší buňka " + Fmt.G(def.Dx / (1 << spec.MaxLevel)) + " m), " +
+                Fmt.G(spec.GapCells) + " buněk přes mezeru" + (spec.CurvatureCells > 0 ? ", " + Fmt.G(spec.CurvatureCells) + " buněk na poloměr zakřivení" : "") + " ...");
+            OctreeMesh tree = OctreeBuilder.Build(def, mesh, vg, baseTypes, nbi, nbj, nbk, spec, log);
+            def.InletCells = def.Inlet.Enabled ? OctreeBuilder.MarkPort(def, def.Inlet, tree, Inlet) : 0;
+            def.OutletCells = def.Outlet.Enabled ? OctreeBuilder.MarkPort(def, def.Outlet, tree, Outlet) : 0;
+            if (def.Inlet.Enabled)
+            {
+                log("Buněk vtoku: " + def.InletCells);
+                if (def.InletCells == 0)
+                {
+                    log("Varování: vtok neleží na povrchu tekutiny – zkontrolujte stěnu, střed a poloměr.");
+                }
+            }
+            if (def.Outlet.Enabled)
+            {
+                log("Buněk výtoku: " + def.OutletCells);
+                if (def.OutletCells == 0)
+                {
+                    log("Varování: výtok neleží na povrchu tekutiny.");
+                }
+            }
+
+            int bs = def.BlockSize;
+            var perLevel = new int[tree.MaxLevel + 1];
+            var fluidPerLevel = new long[tree.MaxLevel + 1];
+            foreach (var b in tree.Blocks)
+            {
+                perLevel[b.Level]++;
+                fluidPerLevel[b.Level] += b.Types.Count(t => t == Fluid);
+            }
+            def.FluidCells = fluidPerLevel.Sum();
+            for (int l = 0; l <= tree.MaxLevel; l++)
+            {
+                log("Úroveň " + l + " (dx = " + Fmt.G(def.Dx / (1 << l)) + " m): " + perLevel[l] + " bloků, " + fluidPerLevel[l] + " buněk tekutiny");
+            }
+
+            string dir = def.Dir(workspace);
+            string meshDir = Path.Combine(dir, "mesh");
+            string bdir = Path.Combine(meshDir, "boundary");
+            if (Directory.Exists(bdir))
+            {
+                foreach (var f in Directory.GetFiles(bdir, "blockBoundary*.txt"))
+                {
+                    File.Delete(f);
+                }
+            }
+            Directory.CreateDirectory(bdir);
+            var blocks = new StringBuilder();
+            var sb = new StringBuilder(bs * bs * bs * 3);
+            foreach (var b in tree.Blocks)
+            {
+                blocks.Append(b.Bi).Append(' ').Append(b.Bj).Append(' ').Append(b.Bk).Append(' ').Append(b.Level).Append("\r\n");
+                if (b.Types.All(t => t == Fluid))
+                {
+                    continue; // no boundary file: the whole block is fluid
+                }
+                sb.Clear();
+                // order of the solver: i outer, then j, k fastest
+                for (int i = 0; i < bs; i++)
+                    for (int j = 0; j < bs; j++)
+                        for (int k = 0; k < bs; k++)
+                        {
+                            sb.Append((char)('0' + b.Types[i + bs * (j + bs * k)])).Append('\n');
+                        }
+                File.WriteAllText(Path.Combine(bdir, "blockBoundary" + tree.Tag(b) + ".txt"), sb.ToString());
+            }
+            File.WriteAllText(Path.Combine(meshDir, "blocks.txt"), blocks.ToString());
+            tree.Save(Path.Combine(meshDir, "octree.bin"));
+
+            // cell types of the level 0 grid for the display: fluid if any finer cell is fluid
+            int GX = tree.NBi * bs, GY = tree.NBj * bs, GZ = tree.NBk * bs;
+            var types = new byte[(long)GX * GY * GZ];
+            for (long i = 0; i < types.LongLength; i++)
+            {
+                types[i] = Wall;
+            }
+            foreach (var b in tree.Blocks)
+            {
+                for (int k = 0; k < bs; k++)
+                    for (int j = 0; j < bs; j++)
+                        for (int i = 0; i < bs; i++)
+                        {
+                            byte t = b.Types[i + bs * (j + bs * k)];
+                            if (t == Wall)
+                            {
+                                continue;
+                            }
+                            long id = ((b.Bi * bs + i) >> b.Level) + (long)GX * (((b.Bj * bs + j) >> b.Level) + (long)GY * ((b.Bk * bs + k) >> b.Level));
+                            if (t == Fluid || types[id] == Wall)
+                            {
+                                types[id] = t;
+                            }
+                        }
+            }
+            File.WriteAllBytes(Path.Combine(meshDir, "celltypes.bin"), types);
+
+            def.NBi = tree.NBi;
+            def.NBj = tree.NBj;
+            def.NBk = tree.NBk;
+            def.Nx = Math.Min(def.Nx, GX);
+            def.Ny = Math.Min(def.Ny, GY);
+            def.Nz = Math.Min(def.Nz, GZ);
+            def.BlockCount = tree.Blocks.Count;
+            def.MeshLevels = tree.MaxLevel + 1;
+            def.LevelBlocks = string.Join(" ", perLevel);
+            def.MeshReady = true;
+            log("Bloků: " + def.BlockCount + " (" + bs + "³ buněk), " + def.MeshCells + " buněk celkem");
             def.Save(workspace);
         }
 

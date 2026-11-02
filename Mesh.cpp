@@ -56,45 +56,57 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 	}
 
 	initIndexes();
+	curLevel = -1;
+	nGhost = 0;
+	grid.periodic[0] = Block::getParInt("xPeriodicity", par, false, 0) != 0;
+	grid.periodic[1] = Block::getParInt("yPeriodicity", par, false, 0) != 0;
+	grid.periodic[2] = Block::getParInt("zPeriodicity", par, false, 0) != 0;
 	nBlock = loadStructure(geomPath);
-	nBlockMax = nBi * nBj * nBk;
 	cout << "Number of blocks in x: " << nBi << endl;
 	cout << "Number of blocks in y: " << nBj << endl;
 	cout << "Number of blocks in z: " << nBk << endl;
 	cout << "Total number of blocks: " << nBlock << endl;
 	cout << "Total number of elements: " << (long long)nBlock * ni * nj * nk << endl;
+	if (maxLevel > 0) {
+		cout << "Refinement levels: " << maxLevel + 1 << " (blocks per level:";
+		for (int l = 0; l <= maxLevel; l++) {
+			cout << " " << levelBlocks[l].size();
+		}
+		cout << ", ghost blocks: " << nGhost << ")" << endl;
+	}
 
 	// blocks initialization
 	blocks = new Block * [nBlockMax];
 	for (int i = 0; i < nBlockMax; i++) {
 		blocks[i] = nullptr;
 	}
-	bool isFirst = true;
 	for (int i = 0; i < nBlock; i++) {
-		int indBlock = blockId[i];
-		switch (problemID) {
-		case 0:
-			blocks[indBlock] = new BlockBasic(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, 1, indAll, indIn, indBound, collisionModel, viscosityModel != 0, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
-			break;
-		case 1:
-			blocks[indBlock] = new BlockFreeSurface(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, 1, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
-			break;
-		case 2:
-			blocks[indBlock] = new BlockFreeSurfaceLagrangeParticles(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, 1, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
-			break;
-		case 21:
-			blocks[indBlock] = new BlockFreeSurfaceLagrangeFibers(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, 1, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
-			break;
-		case 3:
-			blocks[indBlock] = new BlockFreeSurfaceEulerParticlesFVM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, 1, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
-			break;
-		case 4:
-			blocks[indBlock] = new BlockFreeSurfaceEulerParticlesLBM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, 1, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
-			break;
-		default:
-			throw invalid_argument("unknown problemID " + to_string(problemID));
+		int slot = blockId[i];
+		Block* b = createBlock(slot, blockLevel[i], i == 0, par);
+		blocks[slot] = b;
+		for (int d = 0; d < 3; d++) {
+			b->bc[d] = blockIndex[i][d];
 		}
-		isFirst = false;
+		b->grid = &grid;
+		b->fileTag = blockLevel[i] == 0 ? to_string(slot) : "L" + to_string(blockLevel[i]) + "_" + to_string(b->bc[0]) + "_" + to_string(b->bc[1]) + "_" + to_string(b->bc[2]);
+	}
+	for (int l = 0; l <= maxLevel; l++) {
+		for (GhostBlock& g : levelGhosts[l]) {
+			Block* b = createBlock(g.slot, l, false, par);
+			blocks[g.slot] = b;
+			for (int d = 0; d < 3; d++) {
+				b->bc[d] = g.bc[d];
+			}
+			b->grid = &grid;
+			b->ghost = g.source;
+		}
+	}
+	initGhostMaps();
+	initGhostNear();
+	for (int l = 0; l <= maxLevel && maxLevel > 0; l++) {
+		for (int slot : levelBlocks[l]) {
+			blocks[slot]->massCorr = new double[ni * nj * nk]();
+		}
 	}
 
 	Block* b0 = blocks[blockId[0]];
@@ -113,6 +125,11 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 Mesh::~Mesh() {
 	for (int i = 0; i < nBlock; i++) {
 		delete blocks[blockId[i]];
+	}
+	for (auto& level : levelGhosts) {
+		for (GhostBlock& g : level) {
+			delete blocks[g.slot];
+		}
 	}
 	delete[] blocks;
 	for (int i = 0; i < nBlock; i++) {
@@ -172,11 +189,22 @@ void Mesh::initBlocks() {
 	for (int i = 0; i < nBlock; i++) {
 		blocks[blockId[i]]->computeShiftIndexes();
 	}
+	if (maxLevel > 0) {
+		syncGhostGeometry();
+		for (int l = 0; l <= maxLevel; l++) {
+			forGhosts(l, 0, [this](GhostBlock& g) {
+				blocks[g.slot]->initZeroCondition();
+				blocks[g.slot]->computeShiftIndexes();
+			});
+		}
+		syncGhosts();
+	}
 
 	if (isFreeSurface()) {
 		for (int i = 0; i < nBlock; i++) {
 			FSB(blocks[blockId[i]])->initFlagMap();
 		}
+		syncGhosts();
 	}
 	if (initHydroPress) {
 		initHydrostaticPress();
@@ -189,6 +217,7 @@ void Mesh::initBlocks() {
 	for (int i = 0; i < nBlock; i++) {
 		blocks[blockId[i]]->computeInitDistribution();
 	}
+	syncGhosts();
 
 	// wall distance
 	generateDistanceFunction();
@@ -278,36 +307,30 @@ void Mesh::evalBlocks(int iter, int step) {
 		break;
 
 	case 105: {
-		forBlocks([](Block* b) { FSB(b)->calculMassTotal(); });
+		forBlocks([](Block* b) { FSB(b)->calculMassTotal(); }, false);
 		massTot = 0;
 		activeCellsNumTot = 0;
 		for (int i = 0; i < nBlock; i++) {
 			Block* b = blocks[blockId[i]];
+			massTot += FSB(b)->massBlock;
 			if (!b->isBlockEmpty) {
-				massTot += FSB(b)->massBlock;
-				activeCellsNumTot += FSB(b)->activeCellsNumBlock;
-			}
-			else {
-				massTot += FSB(b)->massErr * b->Crho * b->Ch * b->Ch * b->Ch;
+				activeCellsNumTot += (long long)FSB(b)->activeCellsNumBlock << b->level; // 2^level steps per iteration
 			}
 		}
 		break;
 	}
 
 	case 11:
-		for (int i = 0; i < nBlock; i++) {
-			blocks[blockId[i]]->isBlockTouched = false;
-		}
+		forBlocks([](Block* b) { b->isBlockTouched = false; }, false);
 		forBlocks([](Block* b) {
 			FSB(b)->checkIfBlockEmpty();
 			FSB(b)->touchNeighBlocks();
 		});
-		for (int i = 0; i < nBlock; i++) {
-			Block* b = blocks[blockId[i]];
+		forBlocks([](Block* b) {
 			if (b->isBlockTouched) {
 				b->isBlockEmpty = false;
 			}
-		}
+		}, false);
 		break;
 
 		// Lagrangian particles
@@ -404,7 +427,7 @@ void Mesh::evalBlocks(int iter, int step) {
 
 	case 202:
 	case 402: { // rotating gravity
-		double t = blocks[blockId[0]]->Ct * iter;
+		double t = getCt() * iter;
 		double c = cos(gravityRotationOmega * t);
 		double s = sin(gravityRotationOmega * t);
 		forBlocks([c, s](Block* b) {
@@ -423,8 +446,129 @@ void Mesh::evalBlocks(int iter, int step) {
 	}
 }
 
+// one step of the level and (recursively) two steps of the finer levels, iterLevel counts the steps of the level
+void Mesh::advanceLevel(int level, int iterLevel) {
+	if (level < maxLevel) {
+		computeLost(level);
+		explodeToGhosts(level + 1);
+		advanceLevel(level + 1, 2 * iterLevel);
+		advanceLevel(level + 1, 2 * iterLevel + 1);
+		coalesceToGhosts(level, true);
+	}
+	curLevel = level;
+	switch (problemID) {
+	case 0:
+		evalBlocks(iterLevel, 0);
+		if (level > 0) {
+			forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) { blocks[g.slot]->propagateCells(g.near2); });
+			accountInterface(level);
+		}
+		if (level < maxLevel) {
+			applyMassCorr(level);
+		}
+		evalBlocks(iterLevel, 1);
+		if (level > 0) {
+			// the coarser populations stream through the ghost layer during the two fine steps without collision
+			forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
+				Block* b = blocks[g.slot];
+				for (int ind : g.near2) {
+					for (int p = 0; p < nf; p++) {
+						b->fc[nf * ind + p] = b->f[nf * ind + p];
+					}
+				}
+			});
+		}
+		break;
+	case 1:
+		advanceFreeSurfaceLevel(level, iterLevel);
+		break;
+	}
+	curLevel = -1;
+}
+
+// one free surface step of the level (Mesh::timeStep, case 1), the ghosts take part in the local operations
+void Mesh::advanceFreeSurfaceLevel(int level, int iterLevel) {
+	bool coarser = level > 0, finer = level < maxLevel;
+	auto ghostsDo = [this, level](auto fn) { forGhosts(level, 0, [this, &fn](GhostBlock& g) { fn(FSB(blocks[g.slot])); }); };
+
+	// mass exchange, find filled/emptied cells
+	forBlocks([](Block* b) { FSB(b)->applyMassAcc(); });
+	forBlocks([](Block* b) { FSB(b)->computeInterfaceTypes(); });
+	ghostsDo([](BlockFreeSurface* b) { b->computeInterfaceTypes(); });
+	forBlocks([](Block* b) { FSB(b)->massExchange(); });
+	if (coarser) {
+		accountFsExchange(level);
+	}
+	forBlocks([iterLevel](Block* b) { FSB(b)->findFilledEmptied(iterLevel); });
+	ghostsDo([](BlockFreeSurface* b) { b->findSurfaceLevels(1); });
+	forBlocks([](Block* b) { FSB(b)->findSurfaceLevels(1); });
+	for (int j = 2; j <= 4; j++) {
+		forBlocks([j](Block* b) { FSB(b)->findSurfaceLevels(j); });
+		ghostsDo([j](BlockFreeSurface* b) { b->findSurfaceLevels(j); });
+	}
+	evalBlocks(iterLevel, 3);
+	evalBlocks(iterLevel, 4);
+	forBlocks([](Block* b) { FSB(b)->injectPending(); });
+	for (int s = 0; s < nSmoothStep + 1; s++) {
+		int ns = nSmoothStep;
+		forBlocks([s, ns](Block* b) { FSB(b)->smoothVOF(s, ns); });
+		ghostsDo([s, ns](BlockFreeSurface* b) { b->smoothVOF(s, ns); });
+	}
+	forBlocks([](Block* b) {
+		FSB(b)->calculateNormalVectors();
+		FSB(b)->setWetAngle();
+	});
+	ghostsDo([](BlockFreeSurface* b) {
+		b->calculateNormalVectors();
+		b->setWetAngle();
+	});
+	forBlocks([](Block* b) { FSB(b)->calculateCurvature(); });
+	ghostsDo([](BlockFreeSurface* b) { b->calculateCurvature(); });
+
+	// propagation, the populations of the coarser level stream through the ghost layer
+	evalBlocks(iterLevel, 0);
+	if (coarser) {
+		forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) { blocks[g.slot]->propagateCells(g.near2); });
+		accountInterface(level);
+	}
+	applyMassCorr(level);
+
+	// macro, collision, new free surface geometry (also of the ghost cells, the requests go to their level)
+	forBlocks([](Block* b) { b->makro(); });
+	forBlocks([](Block* b) {
+		b->collision();
+		FSB(b)->newFsGeometryPrepare();
+	});
+	ghostsDo([](BlockFreeSurface* b) { b->newFsGeometryPrepare(); });
+	forBlocks([](Block* b) { FSB(b)->newFsGeometryApply(); });
+	ghostsDo([](BlockFreeSurface* b) { b->newFsGeometryApply(); });
+	forwardGhostRequests(level);
+	if (coarser) {
+		forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
+			BlockFreeSurface* b = FSB(blocks[g.slot]);
+			for (int ind : g.near2) {
+				if (b->flagMap[ind] == 1 || b->flagMap[ind] == 3) {
+					for (int p = 0; p < nf; p++) {
+						b->fc[nf * ind + p] = b->f[nf * ind + p];
+					}
+				}
+			}
+		});
+	}
+
+	evalBlocks(iterLevel, 9);  // destroy artefacts
+	evalBlocks(iterLevel, 10); // mass redistribution
+	forwardGhostMass(level);
+	evalBlocks(iterLevel, 11); // check empty block flag
+	activateFromGhosts(level);
+}
+
 // one time step of the selected problem
 void Mesh::timeStep(int iter) {
+	if (maxLevel > 0) {
+		advanceLevel(0, iter);
+		return;
+	}
 	switch (problemID) {
 	case 0: // classic LBM
 		evalBlocks(iter, 0);
@@ -616,49 +760,617 @@ void Mesh::model(int velocityModel, int** ex, int** ey, int** ez, double** w, in
 	}
 }
 
+Block* Mesh::createBlock(int indBlock, int level, bool isFirst, const ParamMap& par) {
+	switch (problemID) {
+	case 0:
+		return new BlockBasic(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel != 0, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	case 1:
+		return new BlockFreeSurface(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	case 2:
+		return new BlockFreeSurfaceLagrangeParticles(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	case 21:
+		return new BlockFreeSurfaceLagrangeFibers(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	case 3:
+		return new BlockFreeSurfaceEulerParticlesFVM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	case 4:
+		return new BlockFreeSurfaceEulerParticlesLBM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	default:
+		throw invalid_argument("unknown problemID " + to_string(problemID));
+	}
+}
+
+// blocks.txt: "bi bj bk" (level 0) or "bi bj bk level" with the block coordinates at its level
 int Mesh::loadStructure(string geomPath) {
 	string fileName = geomPath + "mesh/blocks.txt";
 	ifstream myfile(fileName);
 	if (!myfile.is_open()) {
 		throw runtime_error("cannot open " + fileName);
 	}
-	vector<array<int, 3> > list;
+	vector<array<int, 4> > list;
 	string line;
 	nBi = nBj = nBk = 0;
+	maxLevel = 0;
 	while (getline(myfile, line)) {
 		istringstream iss(line);
-		array<int, 3> idx;
+		array<int, 4> idx = { 0, 0, 0, 0 };
 		if (!(iss >> idx[0] >> idx[1] >> idx[2])) {
 			continue; // empty line
 		}
-		if (idx[0] < 0 || idx[1] < 0 || idx[2] < 0) {
-			throw runtime_error("negative block index in " + fileName);
+		if (!(iss >> idx[3])) {
+			idx[3] = 0;
 		}
-		nBi = max(nBi, idx[0] + 1);
-		nBj = max(nBj, idx[1] + 1);
-		nBk = max(nBk, idx[2] + 1);
+		if (idx[0] < 0 || idx[1] < 0 || idx[2] < 0 || idx[3] < 0 || idx[3] > 15) {
+			throw runtime_error("invalid block index in " + fileName + ": '" + line + "'");
+		}
+		maxLevel = max(maxLevel, idx[3]);
+		nBi = max(nBi, (idx[0] >> idx[3]) + 1);
+		nBj = max(nBj, (idx[1] >> idx[3]) + 1);
+		nBk = max(nBk, (idx[2] >> idx[3]) + 1);
 		list.push_back(idx);
 	}
 	if (list.empty()) {
 		throw runtime_error("no blocks in " + fileName);
 	}
+	if (maxLevel > 0) {
+		if (nf == 9) {
+			throw invalid_argument("grid refinement is not available for the D2Q9 model");
+		}
+		if (ni % 2 || nj % 2 || nk % 2) {
+			throw invalid_argument("grid refinement requires even block dimensions ni, nj, nk");
+		}
+		if (problemID != 0 && problemID != 1) {
+			throw invalid_argument("grid refinement is available for problemID 0 and 1 only");
+		}
+	}
+	if (nk == 1 && nBk == 1) {
+		grid.periodic[2] = true; // 2D model, see Block::initCommon
+	}
+	grid.nBi = nBi;
+	grid.nBj = nBj;
+	grid.nBk = nBk;
+	grid.maxLevel = maxLevel;
+	int nLinear = nBi * nBj * nBk;
 	int nBlocks = (int)list.size();
-	blockMap = new int[nBi * nBj * nBk];
-	for (int i = 0; i < nBi * nBj * nBk; i++) {
+	blockMap = new int[nLinear];
+	for (int i = 0; i < nLinear; i++) {
 		blockMap[i] = -1;
 	}
 	blockIndex = new int* [nBlocks];
 	blockId = new int[nBlocks];
+	blockLevel.assign(nBlocks, 0);
+	levelBlocks.assign(maxLevel + 1, vector<int>());
+	int nextSlot = nLinear;
 	for (int s = 0; s < nBlocks; s++) {
+		int l = list[s][3];
 		blockIndex[s] = new int[3]{ list[s][0], list[s][1], list[s][2] };
-		int ind = (nBi * nBj) * list[s][2] + nBi * list[s][1] + list[s][0];
-		if (blockMap[ind] != -1) {
-			throw runtime_error("duplicate block in " + fileName);
+		blockLevel[s] = l;
+		int slot;
+		if (l == 0) {
+			slot = (nBi * nBj) * list[s][2] + nBi * list[s][1] + list[s][0];
+			if (blockMap[slot] != -1) {
+				throw runtime_error("duplicate block in " + fileName);
+			}
+			blockMap[slot] = s;
 		}
-		blockMap[ind] = s;
-		blockId[s] = ind;
+		else {
+			unsigned long long key = BlockGrid::key(l, list[s][0], list[s][1], list[s][2]);
+			if (grid.slots.count(key)) {
+				throw runtime_error("duplicate block in " + fileName);
+			}
+			slot = nextSlot++;
+			grid.slots[key] = slot;
+		}
+		blockId[s] = slot;
+		levelBlocks[l].push_back(slot);
 	}
+	nBlockMax = nextSlot;
+	createGhosts(list);
 	return nBlocks;
+}
+
+// ghost blocks around the blocks of every level where the neighbourhood is held by another level
+void Mesh::createGhosts(const vector<array<int, 4> >& list) {
+	levelGhosts.assign(maxLevel + 1, vector<GhostBlock>());
+	if (maxLevel == 0) {
+		return;
+	}
+	auto exists = [this](int l, int i, int j, int k) {
+		if (l < 0 || l > maxLevel) {
+			return false;
+		}
+		int slot = grid.find(l, i, j, k);
+		if (slot < 0) {
+			return false;
+		}
+		return l == 0 ? blockMap[slot] >= 0 : true;
+	};
+	for (auto& b : list) {
+		for (int l = 0; l < b[3]; l++) {
+			int sh = b[3] - l;
+			if (exists(l, b[0] >> sh, b[1] >> sh, b[2] >> sh)) {
+				throw runtime_error("blocks.txt: block (" + to_string(b[0]) + ", " + to_string(b[1]) + ", " + to_string(b[2]) + ") of the level " + to_string(b[3]) + " overlaps a block of the level " + to_string(l));
+			}
+		}
+	}
+	unordered_map<unsigned long long, int> known;
+	int nextSlot = nBlockMax;
+	for (auto& b : list) {
+		int l = b[3];
+		for (int dk = -1; dk <= 1; dk++) {
+			for (int dj = -1; dj <= 1; dj++) {
+				for (int di = -1; di <= 1; di++) {
+					int p[3] = { b[0] + di, b[1] + dj, b[2] + dk };
+					if ((di == 0 && dj == 0 && dk == 0) || !grid.wrap(l, p[0], p[1], p[2]) || exists(l, p[0], p[1], p[2])) {
+						continue;
+					}
+					unsigned long long key = BlockGrid::key(l, p[0], p[1], p[2]);
+					if (known.count(key)) {
+						continue;
+					}
+					int source = GHOST_NONE;
+					if (exists(l - 1, p[0] >> 1, p[1] >> 1, p[2] >> 1)) {
+						source = GHOST_FROM_COARSER;
+					}
+					else {
+						for (int o = 0; o < 8; o++) {
+							int c[3] = { 2 * p[0] + (o & 1), 2 * p[1] + ((o >> 1) & 1), 2 * p[2] + (o >> 2) };
+							if (exists(l + 1, c[0], c[1], c[2])) {
+								source = GHOST_FROM_FINER;
+							}
+							for (int g = 0; g < 8; g++) {
+								if (exists(l + 2, 2 * c[0] + (g & 1), 2 * c[1] + ((g >> 1) & 1), 2 * c[2] + (g >> 2))) {
+									// the half of the neighbour block next to this block has to be of the level l + 1
+									bool near = true;
+									int off[3] = { di, dj, dk };
+									int co[3] = { o & 1, (o >> 1) & 1, o >> 2 };
+									for (int d = 0; d < 3; d++) {
+										near = near && (off[d] == 0 || co[d] == (off[d] > 0 ? 0 : 1));
+									}
+									if (near) {
+										throw runtime_error("blocks.txt: the mesh is not 2:1 balanced, a block of the level " + to_string(l) + " touches a block of the level " + to_string(l + 2));
+									}
+								}
+							}
+						}
+						if (source == GHOST_NONE) {
+							for (int lc = l - 2; lc >= 0; lc--) {
+								int sh = l - lc;
+								if (exists(lc, p[0] >> sh, p[1] >> sh, p[2] >> sh)) {
+									throw runtime_error("blocks.txt: the mesh is not 2:1 balanced, a block of the level " + to_string(l) + " touches a block of the level " + to_string(lc));
+								}
+							}
+						}
+					}
+					if (source == GHOST_NONE) {
+						continue; // exterior of the domain
+					}
+					known[key] = 1;
+					GhostBlock gb;
+					gb.slot = (l == 0) ? grid.find(0, p[0], p[1], p[2]) : -1; // slots of the finer levels are assigned below
+					gb.source = source;
+					for (int d = 0; d < 3; d++) {
+						gb.bc[d] = p[d];
+					}
+					levelGhosts[l].push_back(gb);
+					nGhost++;
+				}
+			}
+		}
+	}
+	// the hash holds only the computed blocks during the search above
+	for (int l = 1; l <= maxLevel; l++) {
+		for (GhostBlock& g : levelGhosts[l]) {
+			g.slot = nextSlot++;
+			grid.slots[BlockGrid::key(l, g.bc[0], g.bc[1], g.bc[2])] = g.slot;
+		}
+	}
+	nBlockMax = nextSlot;
+}
+
+// source cells of the ghost blocks
+void Mesh::initGhostMaps() {
+	int nAllB = ni * nj * nk;
+	for (int l = 0; l <= maxLevel; l++) {
+		for (GhostBlock& g : levelGhosts[l]) {
+			if (g.source == GHOST_FROM_COARSER) {
+				int slot = grid.find(l - 1, g.bc[0] >> 1, g.bc[1] >> 1, g.bc[2] >> 1);
+				g.srcBlock.assign(nAllB, slot);
+				g.srcLocal.assign(nAllB, 0);
+				for (int k = 0; k < nk; k++) {
+					for (int j = 0; j < nj; j++) {
+						for (int i = 0; i < ni; i++) {
+							int ci = ((g.bc[0] & 1) * ni + i) >> 1;
+							int cj = ((g.bc[1] & 1) * nj + j) >> 1;
+							int ck = ((g.bc[2] & 1) * nk + k) >> 1;
+							g.srcLocal[(ni * nj) * k + ni * j + i] = (ni * nj) * ck + ni * cj + ci;
+						}
+					}
+				}
+			}
+			else {
+				g.srcBlock.assign(8 * nAllB, -1);
+				g.srcLocal.assign(8 * nAllB, 0);
+				for (int k = 0; k < nk; k++) {
+					for (int j = 0; j < nj; j++) {
+						for (int i = 0; i < ni; i++) {
+							int ind = (ni * nj) * k + ni * j + i;
+							for (int o = 0; o < 8; o++) {
+								int fi = 2 * i + (o & 1), fj = 2 * j + ((o >> 1) & 1), fk = 2 * k + (o >> 2);
+								int slot = grid.find(l + 1, 2 * g.bc[0] + fi / ni, 2 * g.bc[1] + fj / nj, 2 * g.bc[2] + fk / nk);
+								if (slot >= 0 && blocks[slot] && blocks[slot]->ghost == GHOST_NONE) {
+									g.srcBlock[8 * ind + o] = slot;
+									g.srcLocal[8 * ind + o] = (ni * nj) * (fk % nk) + ni * (fj % nj) + fi % ni;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// distance (in cells of the level, 26-neighbourhood) of the ghost cells from the computed cells, 1 or 2
+void Mesh::initGhostNear() {
+	vector<int> ghostIndex(nBlockMax, -1);
+	vector<vector<char> > dist(0);
+	vector<GhostBlock*> all;
+	for (int l = 0; l <= maxLevel; l++) {
+		for (GhostBlock& g : levelGhosts[l]) {
+			ghostIndex[g.slot] = (int)all.size();
+			all.push_back(&g);
+		}
+	}
+	dist.assign(all.size(), vector<char>(ni * nj * nk, 3));
+	for (int pass = 1; pass <= 2; pass++) {
+#pragma omp parallel for schedule(dynamic)
+		for (int gi = 0; gi < (int)all.size(); gi++) {
+			Block* b = blocks[all[gi]->slot];
+			for (int ind = 0; ind < b->nAll; ind++) {
+				if (dist[gi][ind] < 3) {
+					continue;
+				}
+				bool hit = false;
+				for (int dz = -1; dz <= 1 && !hit; dz++) {
+					for (int dy = -1; dy <= 1 && !hit; dy++) {
+						for (int dx = -1; dx <= 1 && !hit; dx++) {
+							int bl, loc;
+							b->local2globalShift(b->indBlock, ind, bl, loc, dx, dy, dz);
+							if (bl < 0 || !blocks[bl]) {
+								continue;
+							}
+							if (pass == 1) {
+								hit = blocks[bl]->ghost == GHOST_NONE;
+							}
+							else {
+								hit = ghostIndex[bl] >= 0 && dist[ghostIndex[bl]][loc] == 1;
+							}
+						}
+					}
+				}
+				if (hit) {
+					dist[gi][ind] = (char)(10 + pass); // marked, finalized below so that the pass reads only older marks
+				}
+			}
+		}
+		for (auto& d : dist) {
+			for (char& c : d) {
+				if (c > 10) {
+					c -= 10;
+				}
+			}
+		}
+	}
+	for (size_t gi = 0; gi < all.size(); gi++) {
+		all[gi]->near1.clear();
+		all[gi]->near2.clear();
+		for (int ind = 0; ind < ni * nj * nk; ind++) {
+			if (dist[gi][ind] == 1) {
+				all[gi]->near1.push_back(ind);
+			}
+			if (dist[gi][ind] <= 2) {
+				all[gi]->near2.push_back(ind);
+			}
+		}
+	}
+}
+
+// cell types of the ghosts: copy of the coarser cell or the prevailing type of the 8 finer cells
+void Mesh::syncGhostGeometry() {
+	for (int l = 0; l <= maxLevel; l++) {
+		forGhosts(l, 0, [this](GhostBlock& g) {
+			Block* b = blocks[g.slot];
+			for (int ind = 0; ind < b->nAll; ind++) {
+				int type = CT_WALL;
+				if (g.source == GHOST_FROM_COARSER) {
+					type = blocks[g.srcBlock[ind]]->cellType[g.srcLocal[ind]];
+				}
+				else {
+					int count[CT_MOVING + 1] = { 0 };
+					for (int o = 0; o < 8; o++) {
+						int sb = g.srcBlock[8 * ind + o];
+						count[sb < 0 ? CT_WALL : blocks[sb]->cellType[g.srcLocal[8 * ind + o]]]++;
+					}
+					if (count[CT_FLUID] >= 4) {
+						type = CT_FLUID;
+					}
+					else {
+						for (int t = CT_WALL + 1; t <= CT_MOVING; t++) {
+							if (count[t] > count[type]) {
+								type = t;
+							}
+						}
+					}
+				}
+				b->cellType[ind] = (unsigned char)type;
+				b->boundary[ind] = type != CT_FLUID;
+			}
+		});
+	}
+}
+
+// state of all ghosts from the current state of the computed blocks (initialization)
+void Mesh::syncGhosts() {
+	for (int l = 1; l <= maxLevel; l++) {
+		explodeToGhosts(l);
+	}
+	for (int l = maxLevel - 1; l >= 0; l--) {
+		coalesceToGhosts(l, false);
+	}
+}
+
+void Mesh::explodeToGhosts(int level) {
+	forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
+		Block* b = blocks[g.slot];
+		b->resetGhost();
+		for (int ind = 0; ind < b->nAll; ind++) {
+			b->prolongCell(ind, blocks[g.srcBlock[ind]], g.srcLocal[ind]);
+		}
+	});
+}
+
+void Mesh::coalesceToGhosts(int level, bool streamed) {
+	forGhosts(level, GHOST_FROM_FINER, [this, level, streamed](GhostBlock& g) {
+		Block* b = blocks[g.slot];
+		Block* src[8];
+		b->resetGhost();
+		if (!streamed || isFreeSurface()) {
+			for (int ind = 0; ind < b->nAll; ind++) {
+				for (int o = 0; o < 8; o++) {
+					int sb = g.srcBlock[8 * ind + o];
+					src[o] = sb < 0 ? nullptr : blocks[sb];
+				}
+				b->restrictCell(ind, src, &g.srcLocal[8 * ind]);
+			}
+		}
+		if (!streamed) {
+			return;
+		}
+		// populations entering the computed cells of this level: average of the populations that streamed
+		// into the finer ghost cells covering the destination cell during the two fine steps (Rohde et al. 2006)
+		for (int ind : g.near1) {
+			if (b->massExchangeKind(ind) == 0) {
+				continue; // wall or gas (the destination reconstructs the population)
+			}
+			for (int dir = 1; dir < nf; dir++) {
+				int bl = b->nbBlock(ind, dir);
+				int loc = b->nbLocal(ind, dir);
+				if (bl < 0 || blocks[bl]->ghost != GHOST_NONE || blocks[bl]->massExchangeKind(loc) == 0) {
+					continue;
+				}
+				Block* dest = blocks[bl];
+				int gi, gj, gk;
+				dest->globalCoords(loc, gi, gj, gk);
+				double sum = 0;
+				int count = 0;
+				for (int o = 0; o < 8; o++) {
+					int fl;
+					Block* fb = cellAtLevel(level + 1, 2 * gi + (o & 1), 2 * gj + ((o >> 1) & 1), 2 * gk + (o >> 2), fl);
+					if (fb && fb->massExchangeKind(fl) != 0) {
+						sum += fb->f[nf * fl + dir];
+						count++;
+					}
+				}
+				if (count == 0) {
+					continue;
+				}
+				double v = sum / count;
+				b->fc[nf * ind + dir] = (pop_t)v;
+				if (dest->massExchangeKind(loc) == 1) {
+					double* mc = &dest->massCorr[loc];
+#pragma omp atomic
+					*mc -= v + w[dir] * dest->rho0; // received by the coarser level
+				}
+			}
+		}
+	});
+}
+
+// mass of the post-collision populations of the level streaming towards the finer level
+void Mesh::computeLost(int level) {
+	int saved = curLevel;
+	curLevel = level;
+	forBlocks([this](Block* b) {
+		for (int i = 0; i < b->nBound; i++) {
+			int ind = b->indBound[i];
+			if (b->massExchangeKind(ind) != 1) {
+				continue;
+			}
+			for (int p = 1; p < nf; p++) {
+				int bl = b->nbBlock(ind, p);
+				int loc = b->nbLocal(ind, p);
+				if (bl >= 0 && blocks[bl]->ghost == GHOST_FROM_FINER && !blocks[bl]->boundary[loc]) {
+					b->massCorr[ind] += b->fc[nf * ind + p] + w[p] * b->rho0;
+				}
+			}
+		}
+	}, false);
+	curLevel = saved;
+}
+
+// populations exchanged by the computed cells of the level and its ghosts from the coarser level in the last
+// propagation, the balance goes to the coarser cell covering the ghost cell
+void Mesh::accountInterface(int level) {
+	forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
+		Block* b = blocks[g.slot];
+		for (int ind : g.near1) {
+			if (b->massExchangeKind(ind) != 1) {
+				continue; // exchange with free surface cells is balanced in accountFsExchange
+			}
+			double d = 0;
+			for (int i = 1; i < nf; i++) {
+				int bl = b->nbBlock(ind, i);
+				int loc = b->nbLocal(ind, i);
+				if (bl < 0 || blocks[bl]->ghost != GHOST_NONE || blocks[bl]->massExchangeKind(loc) == 0) {
+					continue;
+				}
+				d -= b->fc[nf * ind + i] + w[i] * b->rho0;       // received by the computed cell
+				d += b->f[nf * ind + opp[i]] + w[i] * b->rho0;   // sent by the computed cell
+			}
+			if (d != 0) {
+				blocks[g.srcBlock[ind]]->massCorr[g.srcLocal[ind]] += d / 8;
+			}
+		}
+	});
+}
+
+// free surface: the mass exchanged by the computed cells with the interface ghost cells from the coarser level
+// is taken from the coarser cell (the finer cells are authoritative, the coarser ones skip these links)
+void Mesh::accountFsExchange(int level) {
+	forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
+		BlockFreeSurface* b = FSB(blocks[g.slot]);
+		for (int ind : g.near1) {
+			if (b->massExchangeKind(ind) != 2) {
+				continue;
+			}
+			double d = 0;
+			for (int i = 1; i < nf; i++) {
+				int bl = b->nbBlock(ind, i);
+				int loc = b->nbLocal(ind, i);
+				if (bl < 0 || blocks[bl]->ghost != GHOST_NONE) {
+					continue;
+				}
+				BlockFreeSurface* c = FSB(blocks[bl]);
+				int kind = c->massExchangeKind(loc);
+				if (kind == 2) {
+					d -= c->linkExchange(loc, opp[i], b, ind);
+				}
+				else if (kind == 1) {
+					d -= b->fc[nf * ind + i] - c->fc[nf * loc + opp[i]];
+				}
+			}
+			if (d != 0) {
+				FSB(blocks[g.srcBlock[ind]])->massAcc[g.srcLocal[ind]] += d / 8;
+			}
+		}
+	});
+}
+
+// conversions of ghost cells requested by the computed cells of the level are applied by the level holding them
+void Mesh::forwardGhostRequests(int level) {
+	for (GhostBlock& g : levelGhosts[level]) {
+		BlockFreeSurface* b = FSB(blocks[g.slot]);
+		for (int c = 0; c < b->nAirToFs + b->nFluidToFs; c++) {
+			bool air = c < b->nAirToFs;
+			int ind = air ? b->airToFs[c] : b->fluidToFs[c - b->nAirToFs];
+			if (g.source == GHOST_FROM_COARSER) {
+				BlockFreeSurface* t = FSB(blocks[g.srcBlock[ind]]);
+				(air ? t->pendingAir : t->pendingFluid).push_back(g.srcLocal[ind]);
+			}
+			else {
+				for (int o = 0; o < 8; o++) {
+					int sb = g.srcBlock[8 * ind + o];
+					if (sb >= 0) {
+						BlockFreeSurface* t = FSB(blocks[sb]);
+						(air ? t->pendingAir : t->pendingFluid).push_back(g.srcLocal[8 * ind + o]);
+					}
+				}
+			}
+		}
+		b->nAirToFs = b->nFluidToFs = 0;
+	}
+}
+
+// mass redistributed into ghost cells goes to the cells of the level holding them
+void Mesh::forwardGhostMass(int level) {
+	forGhosts(level, 0, [this](GhostBlock& g) {
+		BlockFreeSurface* b = FSB(blocks[g.slot]);
+		for (int ind = 0; ind < b->nAll; ind++) {
+			double dm = b->massAcc[ind];
+			if (dm == 0) {
+				continue;
+			}
+			b->massAcc[ind] = 0;
+			if (g.source == GHOST_FROM_COARSER) {
+				FSB(blocks[g.srcBlock[ind]])->massAcc[g.srcLocal[ind]] += dm / 8;
+				continue;
+			}
+			// 8 finer cells hold the mass of the coarser cell, interface cells take it first
+			int target[8];
+			int n = 0;
+			for (int kind = 2; kind >= 1 && n == 0; kind--) {
+				for (int o = 0; o < 8; o++) {
+					int sb = g.srcBlock[8 * ind + o];
+					if (sb >= 0 && blocks[sb]->massExchangeKind(g.srcLocal[8 * ind + o]) == kind) {
+						target[n++] = o;
+					}
+				}
+			}
+			if (n == 0) {
+				for (int o = 0; o < 8 && n == 0; o++) {
+					if (g.srcBlock[8 * ind + o] >= 0) {
+						target[n++] = o;
+					}
+				}
+			}
+			for (int t = 0; t < n; t++) {
+				int o = target[t];
+				FSB(blocks[g.srcBlock[8 * ind + o]])->massAcc[g.srcLocal[8 * ind + o]] += 8 * dm / n;
+			}
+		}
+	});
+}
+
+// blocks touched through a ghost block by the surface of another level become active
+void Mesh::activateFromGhosts(int level) {
+	for (GhostBlock& g : levelGhosts[level]) {
+		Block* b = blocks[g.slot];
+		if (!b->isBlockTouched) {
+			continue;
+		}
+		b->isBlockTouched = false;
+		if (g.source == GHOST_FROM_COARSER) {
+			blocks[g.srcBlock[0]]->isBlockEmpty = false;
+		}
+		else {
+			for (size_t c = 0; c < g.srcBlock.size(); c++) {
+				if (g.srcBlock[c] >= 0) {
+					blocks[g.srcBlock[c]]->isBlockEmpty = false;
+				}
+			}
+		}
+	}
+}
+
+void Mesh::applyMassCorr(int level) {
+	int saved = curLevel;
+	curLevel = level;
+	forBlocks([this](Block* b) {
+		for (int ind = 0; ind < b->nAll; ind++) {
+			if (b->massCorr[ind] != 0 && b->massExchangeKind(ind) != 1) {
+				b->massCorr[ind] = 0; // the mass of the free surface cells is balanced separately
+			}
+			if (b->massCorr[ind] != 0) {
+				// distributed like the density part of the equilibrium, the momentum stays
+				double dm = b->massCorr[ind];
+				for (int p = 0; p < nf; p++) {
+					b->f[nf * ind + p] += (pop_t)(w[p] * dm);
+				}
+				b->massCorr[ind] = 0;
+			}
+		}
+	}, false);
+	curLevel = saved;
 }
 
 void Mesh::writeResultsToOutFile() {
@@ -671,7 +1383,7 @@ void Mesh::writeResultsToOutFile() {
 }
 
 string Mesh::outputName(const string& prefix, int iter, const string& ext) {
-	long long us = llround(iter * blocks[blockId[0]]->Ct * 1000000);
+	long long us = llround(iter * getCt() * 1000000);
 	return prefix + std::to_string(us) + "us" + ext;
 }
 
@@ -730,16 +1442,18 @@ namespace {
 	};
 
 	// hexahedral cells of the selected cells of all blocks
-	void writeHexaGrid(VtkStream& vtk, Block** blocks, int* blockId, int** blockIndex, int nBlock, bool selectBoundary, long long& nc) {
+	// coordinates are in the cells of the level 0
+	void writeHexaGrid(VtkStream& vtk, Block** blocks, int* blockId, int nBlock, bool selectBoundary, long long& nc) {
 		vector<float> pts;
 		for (int b = 0; b < nBlock; b++) {
 			Block* bl = blocks[blockId[b]];
+			double h = 1.0 / (1 << bl->level);
 			for (int k = 0; k < bl->nk + 1; k++) {
 				for (int j = 0; j < bl->nj + 1; j++) {
 					for (int i = 0; i < bl->ni + 1; i++) {
-						pts.push_back((float)(i + bl->ni * blockIndex[b][0]));
-						pts.push_back((float)(j + bl->nj * blockIndex[b][1]));
-						pts.push_back((float)(k + bl->nk * blockIndex[b][2]));
+						pts.push_back((float)(h * (i + bl->ni * bl->bc[0])));
+						pts.push_back((float)(h * (j + bl->nj * bl->bc[1])));
+						pts.push_back((float)(h * (k + bl->nk * bl->bc[2])));
 					}
 				}
 			}
@@ -812,7 +1526,7 @@ void Mesh::writeResultsToVTK(int iter) {
 	string name = outputName("output_", iter, ".vtk");
 	VtkStream vtk(simulPath + "result/" + name, vtkBinary);
 	long long nc;
-	writeHexaGrid(vtk, blocks, blockId, blockIndex, nBlock, false, nc);
+	writeHexaGrid(vtk, blocks, blockId, nBlock, false, nc);
 	vtk.os << "CELL_DATA " << nc << "\n";
 
 	auto scalar = [&](const string& fieldName, auto fn) {
@@ -916,7 +1630,7 @@ void Mesh::writeResultsToVTK(int iter) {
 	}
 	vtk.os.close();
 
-	vtkFiles.push_back(make_pair(iter * blocks[blockId[0]]->Ct, name));
+	vtkFiles.push_back(make_pair(iter * getCt(), name));
 	writePvd("output.pvd", vtkFiles);
 	if (writeFields) {
 		writeFieldsBinary(iter);
@@ -935,7 +1649,7 @@ void Mesh::writeFieldsBinary(int iter) {
 	auto i32 = [&](int32_t v) { os.write((const char*)&v, 4); };
 	auto f64 = [&](double v) { os.write((const char*)&v, 8); };
 	os.write("LBMF", 4);
-	i32(1); // version
+	i32(maxLevel > 0 ? 2 : 1); // version 2 adds the level of the blocks
 	i32(iter);
 	f64(iter * b0->Ct);
 	i32(problemID);
@@ -943,7 +1657,7 @@ void Mesh::writeFieldsBinary(int iter) {
 	i32(ni);
 	i32(nj);
 	i32(nk);
-	f64(b0->Ch);
+	f64(b0->Ch * (1 << b0->level)); // cell size of the level 0
 	i32((int32_t)names.size());
 	for (auto& n : names) {
 		char buf[16] = { 0 };
@@ -956,6 +1670,9 @@ void Mesh::writeFieldsBinary(int iter) {
 		i32(blockIndex[b][0]);
 		i32(blockIndex[b][1]);
 		i32(blockIndex[b][2]);
+		if (maxLevel > 0) {
+			i32(blockLevel[b]);
+		}
 		for (size_t fld = 0; fld < names.size(); fld++) {
 			double u[3];
 			for (int ind = 0; ind < bl->nAll; ind++) {
@@ -992,7 +1709,7 @@ void Mesh::writeFieldsBinary(int iter) {
 void Mesh::writeBoundaryToVTK() {
 	VtkStream vtk(simulPath + "result/boundary.vtk", vtkBinary);
 	long long nc;
-	writeHexaGrid(vtk, blocks, blockId, blockIndex, nBlock, true, nc);
+	writeHexaGrid(vtk, blocks, blockId, nBlock, true, nc);
 	vtk.os << "CELL_DATA " << nc << "\nSCALARS cell_type float 1\nLOOKUP_TABLE default\n";
 	vector<float> v;
 	forCells(blocks, blockId, nBlock, true, [&](Block* b, int ind) { v.push_back((float)b->cellType[ind]); });
@@ -1002,7 +1719,7 @@ void Mesh::writeBoundaryToVTK() {
 
 void Mesh::writeFreeSurfaceToVTK(int iter) {
 	double isolevel = 0.5;
-	GRIDCELL grid;
+	GRIDCELL cube;
 	TRIANGLE triangles[16];
 	vector<TRIANGLE> tri;
 	int ei[8] = { 0, 1, 1, 0, 0, 1, 1, 0 };
@@ -1017,18 +1734,19 @@ void Mesh::writeFreeSurfaceToVTK(int iter) {
 		int ni = bl->ni;
 		int nj = bl->nj;
 		int nk = bl->nk;
+		double h = 1.0 / (1 << bl->level);
 		for (int k = 0; k < nk; k++) {
-			int kg = k + blockIndex[b][2] * nk;
+			int kg = k + bl->bc[2] * nk;
 			for (int j = 0; j < nj; j++) {
-				int jg = j + blockIndex[b][1] * nj;
+				int jg = j + bl->bc[1] * nj;
 				for (int i = 0; i < ni; i++) {
-					int ig = i + blockIndex[b][0] * ni;
+					int ig = i + bl->bc[0] * ni;
 					int ind = (ni * nj) * k + ni * j + i;
 					double vmin = 1e10, vmax = -1e10;
 					for (int v = 0; v < 8; v++) {
-						grid.p[v].x = ig + ei[v];
-						grid.p[v].y = jg + ej[v];
-						grid.p[v].z = kg + ek[v];
+						cube.p[v].x = h * (ig + ei[v]);
+						cube.p[v].y = h * (jg + ej[v]);
+						cube.p[v].z = h * (kg + ek[v]);
 
 						// vertex value is the average of the 8 surrounding cells
 						double vofAvg = 0.0;
@@ -1043,12 +1761,12 @@ void Mesh::writeFreeSurfaceToVTK(int iter) {
 								break;
 							}
 						}
-						grid.val[v] = vofAvg / 8;
-						vmin = min(vmin, grid.val[v]);
-						vmax = max(vmax, grid.val[v]);
+						cube.val[v] = vofAvg / 8;
+						vmin = min(vmin, cube.val[v]);
+						vmax = max(vmax, cube.val[v]);
 					}
 					if (vmin < isolevel && vmax > isolevel) {
-						int n = Polygonise(grid, isolevel, triangles);
+						int n = Polygonise(cube, isolevel, triangles);
 						tri.insert(tri.end(), triangles, triangles + n);
 					}
 				}
@@ -1084,7 +1802,7 @@ void Mesh::writeFreeSurfaceToVTK(int iter) {
 	vtk.ints(vector<int32_t>(ntri, 5), 1);
 	vtk.os.close();
 
-	vtkFsFiles.push_back(make_pair(iter * blocks[blockId[0]]->Ct, name));
+	vtkFsFiles.push_back(make_pair(iter * getCt(), name));
 	writePvd("outputFS.pvd", vtkFsFiles);
 }
 
@@ -1123,6 +1841,9 @@ void Mesh::generateDistanceFunction() {
 						bl->local2globalShift(indBlock, ind, bs, is, dx, dy, dz);
 						double L = sqrt((double)(dx * dx + dy * dy + dz * dz));
 						if (bs > -1 && bs < nBlockMax && blocks[bs]) {
+							if (blocks[bs]->ghost != GHOST_NONE) {
+								continue; // other level
+							}
 							if (blocks[bs]->boundary[is]) {
 								d = min(d, -0.5 + L);
 							}
@@ -1157,7 +1878,7 @@ void Mesh::generateDistanceFunction() {
 					}
 					int bs, is;
 					bl->local2globalShift(indBlock, ind, bs, is, dx, dy, dz);
-					if (bs > -1 && bs < nBlockMax && blocks[bs] && !blocks[bs]->boundary[is]) {
+					if (bs > -1 && bs < nBlockMax && blocks[bs] && blocks[bs]->ghost == GHOST_NONE && !blocks[bs]->boundary[is]) {
 						double nd = it.first + sqrt((double)(dx * dx + dy * dy + dz * dz));
 						if (nd < blocks[bs]->wallDistance[is]) {
 							blocks[bs]->wallDistance[is] = nd;
@@ -1241,9 +1962,14 @@ void Mesh::initHydrostaticPress() {
 		}
 		return !fs || FSB(b)->flagMap[ind] == 1 || FSB(b)->flagMap[ind] == 3;
 	};
-	double* G = blocks[blockId[0]]->G;
-	double absG = sqrt(G[0] * G[0] + G[1] * G[1] + G[2] * G[2]);
-	if (absG == 0) {
+	// rho = 1 + 3 (x . g) / Cu^2 relative to the highest fluid cell, x in metres
+	auto potential = [](Block* b, int ind) {
+		int gi, gj, gk;
+		b->globalCoords(ind, gi, gj, gk);
+		return ((gi + 0.5) * b->G[0] + (gj + 0.5) * b->G[1] + (gk + 0.5) * b->G[2]) * b->Ch * b->Cf;
+	};
+	Block* r = blocks[blockId[0]];
+	if (r->G[0] == 0 && r->G[1] == 0 && r->G[2] == 0) {
 		return;
 	}
 	double scalarmin = 1e300;
@@ -1251,9 +1977,7 @@ void Mesh::initHydrostaticPress() {
 		Block* bl = blocks[blockId[b]];
 		for (int ind = 0; ind < bl->nAll; ind++) {
 			if (isLiquid(bl, ind)) {
-				int k = ind / (ni * nj), j = (ind % (ni * nj)) / ni, i = ind % ni;
-				double scalar = (blockIndex[b][0] * ni + i) * G[0] + (blockIndex[b][1] * nj + j) * G[1] + (blockIndex[b][2] * nk + k) * G[2];
-				scalarmin = min(scalarmin, scalar);
+				scalarmin = min(scalarmin, potential(bl, ind));
 			}
 		}
 	}
@@ -1261,10 +1985,7 @@ void Mesh::initHydrostaticPress() {
 		Block* bl = blocks[blockId[b]];
 		for (int ind = 0; ind < bl->nAll; ind++) {
 			if (isLiquid(bl, ind)) {
-				int k = ind / (ni * nj), j = (ind % (ni * nj)) / ni, i = ind % ni;
-				double scalar = (blockIndex[b][0] * ni + i) * G[0] + (blockIndex[b][1] * nj + j) * G[1] + (blockIndex[b][2] * nk + k) * G[2];
-				// depth below the top fluid cell is h = (scalar - scalarmin) / |g|, rho = 1 + 3 |g| h
-				bl->Rho[ind] += 3.0 * (scalar - scalarmin);
+				bl->Rho[ind] += 3.0 * (potential(bl, ind) - scalarmin) / (bl->Cu * bl->Cu);
 				bl->dRho[ind] = bl->Rho[ind] - bl->rho0;
 			}
 		}
@@ -1272,14 +1993,32 @@ void Mesh::initHydrostaticPress() {
 }
 
 Block* Mesh::cellAt(int gi, int gj, int gk, int& ind) {
-	int bi = gi / ni, bj = gj / nj, bk = gk / nk;
-	if (gi < 0 || gj < 0 || gk < 0 || bi >= nBi || bj >= nBj || bk >= nBk) {
+	Block* b = cellAtLevel(0, gi, gj, gk, ind);
+	return (b && b->ghost == GHOST_NONE) ? b : nullptr;
+}
+
+Block* Mesh::cellAtLevel(int level, int gi, int gj, int gk, int& ind) {
+	if (gi < 0 || gj < 0 || gk < 0) {
+		return nullptr;
+	}
+	int slot = grid.find(level, gi / ni, gj / nj, gk / nk);
+	if (slot < 0 || slot >= nBlockMax) {
 		return nullptr;
 	}
 	ind = (ni * nj) * (gk % nk) + ni * (gj % nj) + gi % ni;
-	return blocks[(nBi * nBj) * bk + nBi * bj + bi];
+	return blocks[slot];
 }
 
+// cell updates of one iteration (the level L makes 2^L steps)
+long long Mesh::cellUpdatesPerIteration() {
+	long long n = 0;
+	for (int b = 0; b < nBlock; b++) {
+		n += (long long)ni * nj * nk << blockLevel[b];
+	}
+	return n;
+}
+
+// time step of the level 0
 double Mesh::getCt() {
-	return blocks[blockId[0]]->Ct;
+	return blocks[blockId[0]]->Ct * (1 << blockLevel[0]);
 }

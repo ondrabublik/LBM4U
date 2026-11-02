@@ -101,7 +101,7 @@ static int run(int argc, char** argv) {
 	ofstream outfile(simulPath + "result/residuum.txt", ios::out);
 
 	double Ct = mesh->getCt();
-	long long totalCells = (long long)mesh->nBlock * mesh->ni * mesh->nj * mesh->nk;
+	long long totalCells = mesh->cellUpdatesPerIteration();
 	double tStart = omp_get_wtime();
 	double tLast = tStart;
 	int iterLast = 0;

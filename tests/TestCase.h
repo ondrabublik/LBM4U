@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <array>
+#include <vector>
 #include "../Mesh.h"
 
 // relative tolerance of quantities affected by the precision of the populations
@@ -27,7 +28,24 @@ struct CaseSpec {
 	std::function<int(int, int, int)> flag;
 	// optional block existence filter
 	std::function<bool(int, int, int)> blockExists;
+
+	// refined mesh: blocks (bi, bj, bk, level) replace the nBi x nBj x nBk grid, the functions below
+	// take the level and the global cell indexes of the level and replace cellType and flag
+	std::vector<std::array<int, 4> > octree;
+	std::function<int(int, int, int, int)> cellTypeL;
+	std::function<int(int, int, int, int)> flagL;
+	// initial density and velocity (lattice units of the level 0) of the single phase solver
+	std::function<std::array<double, 4>(int, int, int, int)> initL;
 };
+
+// leaves of an octree over nBi x nBj x nBk blocks, refine(level, bi, bj, bk) splits a block
+std::vector<std::array<int, 4> > octreeBlocks(int nBi, int nBj, int nBk, int maxLevel, std::function<bool(int, int, int, int)> refine);
+
+// computed block holding the point given in the cells of the level 0 (the finest one), nullptr outside
+Block* blockAtPoint(Mesh& mesh, double x, double y, double z, int& ind);
+
+// sum of rho * cell volume over the fluid cells of the computed blocks (volume of a level 0 cell is 1)
+double latticeMass(Mesh& mesh);
 
 // base parameter set: lattice units equal physical units (Ch = Ct = Cu = 1)
 std::map<std::string, std::string> latticeParams(int problemID, int ni, double vKin);

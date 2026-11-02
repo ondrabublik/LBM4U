@@ -135,7 +135,7 @@ namespace LBMStudio
             d.Mach = ul * Math.Sqrt(3);
             d.MaxIter = (int)Math.Min(int.MaxValue - 1, Math.Ceiling(s.EndTime / d.Dt));
             d.SaveRate = Math.Max(1, (int)Math.Round(s.SaveInterval / d.Dt));
-            d.Cells = (long)g.BlockCount * g.BlockSize * g.BlockSize * g.BlockSize;
+            d.Cells = g.MeshCells;
             double bytesPerCell = s.ProblemId == 0 ? 2 * 19 * 8 + 120 : 2 * 19 * 8 + 260;
             d.MemoryGB = d.Cells * bytesPerCell / 1e9;
             if (d.Tau < 0.501 && s.Smagorinsky <= 0)
@@ -246,7 +246,71 @@ namespace LBMStudio
             }
             if (s.ProblemId == 1)
             {
-                WriteFreeSurfaceInit(g, s, workspace, initDir);
+                OctreeMesh tree = g.LoadOctree(workspace);
+                if (tree != null)
+                {
+                    WriteFreeSurfaceInit(g, s, tree, initDir);
+                }
+                else
+                {
+                    WriteFreeSurfaceInit(g, s, workspace, initDir);
+                }
+            }
+        }
+
+        /// <summary>Initial flags of a refined mesh, every block at its level (same rules as for the uniform mesh).</summary>
+        static void WriteFreeSurfaceInit(GeometryDef g, SimulationDef s, OctreeMesh tree, string initDir)
+        {
+            Directory.CreateDirectory(initDir);
+            int bs = tree.BlockSize;
+            Vec3 up = s.Gravity.Length > 0 ? s.Gravity * (-1 / s.Gravity.Length) : new Vec3(0, 0, 1);
+            // height of the cell centre above the domain origin measured against gravity
+            Func<OctBlock, int, int, int, double> height = (b, i, j, k) =>
+            {
+                double h = g.Dx / (1 << b.Level);
+                return ((b.Bi * bs + i + 0.5) * up.X + (b.Bj * bs + j + 0.5) * up.Y + (b.Bk * bs + k + 0.5) * up.Z) * h;
+            };
+            double hMin = double.MaxValue;
+            foreach (var b in tree.Blocks)
+                for (int k = 0; k < bs; k++)
+                    for (int j = 0; j < bs; j++)
+                        for (int i = 0; i < bs; i++)
+                        {
+                            if (b.Types[i + bs * (j + bs * k)] == CaseGenerator.Fluid)
+                            {
+                                hMin = Math.Min(hMin, height(b, i, j, k));
+                            }
+                        }
+            int[,] nb = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+            var sb = new StringBuilder();
+            foreach (var b in tree.Blocks)
+            {
+                sb.Clear();
+                for (int i = 0; i < bs; i++)
+                    for (int j = 0; j < bs; j++)
+                        for (int k = 0; k < bs; k++)
+                        {
+                            bool liquid = false;
+                            if (b.Types[i + bs * (j + bs * k)] == CaseGenerator.Fluid)
+                            {
+                                switch (s.Fill)
+                                {
+                                    case FillMode.Full:
+                                        liquid = true;
+                                        break;
+                                    case FillMode.Level:
+                                        liquid = height(b, i, j, k) - hMin < s.FillLevel;
+                                        break;
+                                }
+                                // the first fluid layer in front of the inlet starts filled
+                                for (int q = 0; q < 6 && !liquid; q++)
+                                {
+                                    liquid = tree.TypeAt(b.Level, b.Bi * bs + i + nb[q, 0], b.Bj * bs + j + nb[q, 1], b.Bk * bs + k + nb[q, 2]) == CaseGenerator.Inlet;
+                                }
+                            }
+                            sb.Append(liquid ? "1 0 0 0 1\n" : "1 0 0 0 2\n");
+                        }
+                File.WriteAllText(Path.Combine(initDir, "blockInit" + tree.Tag(b) + ".txt"), sb.ToString());
             }
         }
 

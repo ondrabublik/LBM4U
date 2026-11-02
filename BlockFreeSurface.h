@@ -54,7 +54,7 @@ public:
 	double* tauCell; // relaxation time used in the last collision
 
 	BlockFreeSurface();
-	BlockFreeSurface(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par);
+	BlockFreeSurface(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int level, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par);
 
 	~BlockFreeSurface();
 
@@ -66,6 +66,8 @@ public:
 	void iniVofAndMass();
 	void collision();
 	void propagation();
+	void propagateCells(const vector<int>& cells);
+	void propagateCell(int ind);
 	void makro();
 	void writeBlock(int id);
 	void computeInterfaceTypes();
@@ -90,11 +92,24 @@ public:
 	void touchNeighBlocks();
 	void calculMassTotal();
 	void setWetAngle();
-	void findSurfaceLevels(int level);
+	void findSurfaceLevels(int surfLevel);
 	// shear rate in lattice units computed locally from the non-equilibrium part
 	double computeShearRate(int ind);
 	double nonNewtonianViscosityModel(double gamma);
 	void outputVelocity(int ind, double* u);
+
+	// grid refinement: computed blocks receive mass from the other levels in massAcc and conversions in pending*,
+	// ghost blocks collect there the mass and the conversions their cells got from the computed cells
+	double* massAcc;
+	std::vector<int> pendingAir, pendingFluid;
+	void prolongCell(int ind, const Block* src, int sInd);
+	void restrictCell(int ind, Block* const* src, const int* sInd);
+	int massExchangeKind(int ind) const;
+	void resetGhost();
+	// mass exchanged by the interface cell ind with the fluid or interface neighbour nb in the direction p
+	double linkExchange(int ind, int p, const BlockFreeSurface* nb, int loc) const;
+	void applyMassAcc();
+	void injectPending();
 
 	// acceleration acting on the cell and fluid fraction (porosity) of the cell
 	virtual void cellForce(int ind, double* acc, double& epsF);

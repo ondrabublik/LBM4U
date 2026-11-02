@@ -55,7 +55,8 @@ if(LBM_BUILD_TESTS)
 		tests/TestCase.cpp
 		tests/test_core.cpp
 		tests/test_single_phase.cpp
-		tests/test_free_surface.cpp)
+		tests/test_free_surface.cpp
+		tests/test_refinement.cpp)
 	target_link_libraries(lbm_tests PRIVATE lbmcore ${LBM_STATIC_LINK})
 	add_test(NAME lbm_tests COMMAND lbm_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()

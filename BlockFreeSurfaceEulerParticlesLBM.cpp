@@ -16,8 +16,8 @@
 
 using namespace std;
 
-BlockFreeSurfaceEulerParticlesLBM::BlockFreeSurfaceEulerParticlesLBM(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int coarseLevel, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par)
-	: BlockFreeSurface(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, coarseLevel, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par) {
+BlockFreeSurfaceEulerParticlesLBM::BlockFreeSurfaceEulerParticlesLBM(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int level, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par)
+	: BlockFreeSurface(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par) {
 
 	concentration = new double[ntot]();
 	gc = new double[ntot * nf]();
@@ -150,7 +150,7 @@ BlockFreeSurfaceEulerParticlesLBM::~BlockFreeSurfaceEulerParticlesLBM() {
 
 void BlockFreeSurfaceEulerParticlesLBM::readInitConcentration(int id, string simulPath) {
 	string line;
-	string fileName = simulPath + "init/concentration" + std::to_string(id) + ".txt";
+	string fileName = simulPath + "init/concentration" + fileTag + ".txt";
 	try {
 		ifstream* myfile = new ifstream(fileName);
 		if (myfile->is_open()) {

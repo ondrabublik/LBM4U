@@ -143,6 +143,163 @@ namespace LBMStudio
             return group;
         }
 
+        /// <summary>
+        /// Boundary faces of the fluid region of a refined mesh, every block drawn with its own cell size. The cut
+        /// position is an index of the level 0 cells.
+        /// </summary>
+        public static Model3D OctreeCells(GeometryDef g, OctreeMesh tree, int cutAxis, int cutPos, bool keepUpper, out long faceCount)
+        {
+            int bs = tree.BlockSize;
+            Vec3 o = g.Origin;
+            Func<int, int, int, int, bool> active = (l, i, j, k) =>
+            {
+                if (cutAxis >= 0)
+                {
+                    int c = (cutAxis == 0 ? i : (cutAxis == 1 ? j : k)) >> l;
+                    if (keepUpper ? c < cutPos : c > cutPos)
+                    {
+                        return false;
+                    }
+                }
+                return tree.TypeAt(l, i, j, k) != CaseGenerator.Wall;
+            };
+            int[,] dirs = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
+            var faces = new List<long>[tree.Blocks.Count]; // cell index * 8 + direction
+            long count = 0;
+            System.Threading.Tasks.Parallel.For(0, tree.Blocks.Count, n =>
+            {
+                var b = tree.Blocks[n];
+                var list = new List<long>();
+                for (int k = 0; k < bs; k++)
+                    for (int j = 0; j < bs; j++)
+                        for (int i = 0; i < bs; i++)
+                        {
+                            int gi = b.Bi * bs + i, gj = b.Bj * bs + j, gk = b.Bk * bs + k;
+                            if (b.Types[i + bs * (j + bs * k)] == CaseGenerator.Wall || !active(b.Level, gi, gj, gk))
+                            {
+                                continue;
+                            }
+                            for (int d = 0; d < 6; d++)
+                            {
+                                if (!active(b.Level, gi + dirs[d, 0], gj + dirs[d, 1], gk + dirs[d, 2]))
+                                {
+                                    list.Add((long)(i + bs * (j + bs * k)) * 8 + d);
+                                }
+                            }
+                        }
+                faces[n] = list;
+                System.Threading.Interlocked.Add(ref count, list.Count);
+            });
+            faceCount = count;
+            if (faceCount > MaxFaces)
+            {
+                return null;
+            }
+            var positions = new Point3DCollection[TypeColors.Length];
+            var uvs = new PointCollection[TypeColors.Length];
+            var indices = new Int32Collection[TypeColors.Length];
+            var corners = new Point3D[4];
+            for (int n = 0; n < tree.Blocks.Count; n++)
+            {
+                var b = tree.Blocks[n];
+                double dx = g.Dx / (1 << b.Level);
+                foreach (long f in faces[n])
+                {
+                    int cell = (int)(f / 8), d = (int)(f % 8);
+                    int i = cell % bs, j = cell / bs % bs, k = cell / (bs * bs);
+                    byte type = b.Types[cell];
+                    int axis = d / 2;
+                    int a1 = axis == 0 ? 1 : 0, a2 = axis == 2 ? 1 : 2;
+                    double[] lo = { o.X + (b.Bi * bs + i) * dx, o.Y + (b.Bj * bs + j) * dx, o.Z + (b.Bk * bs + k) * dx };
+                    var p = new double[3];
+                    p[axis] = lo[axis] + (d % 2 == 1 ? dx : 0);
+                    for (int q = 0; q < 4; q++)
+                    {
+                        p[a1] = lo[a1] + (q == 1 || q == 2 ? dx : 0);
+                        p[a2] = lo[a2] + (q >= 2 ? dx : 0);
+                        corners[q] = new Point3D(p[0], p[1], p[2]);
+                    }
+                    if (positions[type] == null)
+                    {
+                        positions[type] = new Point3DCollection();
+                        uvs[type] = new PointCollection();
+                        indices[type] = new Int32Collection();
+                    }
+                    int start = positions[type].Count;
+                    foreach (var pt in corners)
+                    {
+                        positions[type].Add(pt);
+                    }
+                    uvs[type].Add(new W.Point(0, 0));
+                    uvs[type].Add(new W.Point(1, 0));
+                    uvs[type].Add(new W.Point(1, 1));
+                    uvs[type].Add(new W.Point(0, 1));
+                    foreach (int q in new[] { 0, 1, 2, 0, 2, 3 })
+                    {
+                        indices[type].Add(start + q);
+                    }
+                }
+            }
+            var group = new Model3DGroup();
+            for (int t = 0; t < positions.Length; t++)
+            {
+                if (positions[t] == null)
+                {
+                    continue;
+                }
+                var mesh = new MeshGeometry3D { Positions = positions[t], TextureCoordinates = uvs[t], TriangleIndices = indices[t] };
+                mesh.Freeze();
+                var mat = new DiffuseMaterial(CellBrush(TypeColors[t]));
+                mat.Freeze();
+                group.Children.Add(new GeometryModel3D(mesh, mat) { BackMaterial = mat });
+            }
+            group.Freeze();
+            return group;
+        }
+
+        /// <summary>Colours of the refinement levels.</summary>
+        public static readonly Color[] LevelColors = { Colors.DimGray, Color.FromRgb(40, 100, 220), Color.FromRgb(30, 160, 60), Color.FromRgb(240, 140, 0), Color.FromRgb(210, 30, 30) };
+
+        /// <summary>Edges of the blocks of a refined mesh coloured by the level.</summary>
+        public static Model3D OctreeBlockEdges(GeometryDef g, OctreeMesh tree)
+        {
+            int bs = tree.BlockSize;
+            Vec3 o = g.Origin;
+            var group = new Model3DGroup();
+            for (int l = 0; l <= tree.MaxLevel; l++)
+            {
+                double h = bs * g.Dx / (1 << l);
+                var edges = new HashSet<Tuple<int, int, int, int>>(); // node and axis, shared edges are drawn once
+                foreach (var b in tree.Blocks)
+                {
+                    if (b.Level != l)
+                    {
+                        continue;
+                    }
+                    for (int e = 0; e < 4; e++)
+                    {
+                        int p = e & 1, q = e >> 1;
+                        edges.Add(Tuple.Create(b.Bi, b.Bj + p, b.Bk + q, 0));
+                        edges.Add(Tuple.Create(b.Bi + p, b.Bj, b.Bk + q, 1));
+                        edges.Add(Tuple.Create(b.Bi + p, b.Bj + q, b.Bk, 2));
+                    }
+                }
+                var xyz = new List<double>();
+                double r = bs * g.Dx * 0.012 / Math.Sqrt(1 << l);
+                foreach (var key in edges)
+                {
+                    var a = new Vec3(o.X + key.Item1 * h, o.Y + key.Item2 * h, o.Z + key.Item3 * h);
+                    var b = a + new Vec3(key.Item4 == 0 ? h : 0, key.Item4 == 1 ? h : 0, key.Item4 == 2 ? h : 0);
+                    Viewer3D.AddCylinder(xyz, a, b, r, r, 4);
+                }
+                if (xyz.Count > 0)
+                {
+                    group.Children.Add(Viewer3D.Triangles(xyz, LevelColors[Math.Min(l, LevelColors.Length - 1)], 1));
+                }
+            }
+            return group.Children.Count == 0 ? null : group;
+        }
+
         /// <summary>Texture of one cell: the colour with a darker border.</summary>
         static Brush CellBrush(Color color)
         {

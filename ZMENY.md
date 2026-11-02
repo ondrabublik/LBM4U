@@ -39,7 +39,7 @@ Návratový kód 3 znamená divergenci (NaN).
 | Artefakty | současná konverze sousedních buněk rozhraní na kapalinu a plyn vytvořila kontakt kapalina–plyn a ztrátu hmoty | buňka sousedící s „filled“ artefaktem se nevyprázdní, pojistka `fixFluidGasContacts` |
 | `initHydrostaticPress` | zastíněná proměnná `lo`, reference od vrcholu domény | počítá se od nejvyšší buňky kapaliny |
 | Restart | `writeResultsToOutFile` bral sekvenční index bloku | správné mapování a id souborů |
-| `coarseLevel` | nekonzistentní velikosti polí | zahušťování zatím není implementováno – `coarseLevel != 1` hlásí chybu |
+| `coarseLevel` | nekonzistentní velikosti polí | nahrazeno statickým zahušťováním (viz níže) |
 | Ne-newtonské kapaliny | fungovaly jen s MRT; smyková rychlost z rozdílů sousedů (souběh) | libovolný kolizní model, lokální smyková rychlost z nerovnovážných momentů |
 | Okrajové soubory | `line.compare("1") == 1` | čtení celočíselného typu buňky, kontrola chyb |
 | Čtení souborů | `catch (int)` nezachytil výjimky | `std::exception`, srozumitelné hlášení |
@@ -76,16 +76,32 @@ Návratový kód 3 znamená divergenci (NaN).
 * Binární VTK (`vtkBinary = 1`), kolekce `output.pvd`/`outputFS.pvd`, kompaktní `fields_<iter>.bin` pro GUI (`writeFields = 1`).
 * MLUPS z `omp_get_wtime` průměrované přes interval ukládání.
 
+## Zahušťování sítě (octree)
+
+Statické zahušťování podle geometrie: síť vznikne jednou při generování a během výpočtu se nemění (hladinu nesleduje).
+
+* Blok úrovně `L` má stále `ni × nj × nk` buněk velikosti `H / ni / 2^L`. Sousední bloky (i přes hranu a roh) se liší nejvýše o jednu úroveň (2:1), řešič nevyvážené sítě odmítne.
+* `mesh/blocks.txt`: řádek `bi bj bk` (úroveň 0, beze změny) nebo `bi bj bk L` se souřadnicemi bloku na jeho úrovni. Soubory bloků úrovně 0 mají dál číslo `nBi·nBj·bk + nBi·bj + bi`, jemnější bloky značku `L<L>_<bi>_<bj>_<bk>` (`blockBoundaryL2_5_3_1.txt`, `blockInitL2_5_3_1.txt`).
+* Akustické škálování: `Ct` i `Ch` se na každé úrovni půlí, `Cu` a tlak jsou společné. Jemnější úroveň dělá dva kroky na jeden krok hrubší (sub-cycling), `τ_{L+1} = ½ + 2(τ_L − ½)` – jemné úrovně jsou stabilnější. Iterace a čas výstupů jsou kroky úrovně 0.
+* Rozhraní úrovní: objemová metoda Rohde et al. (2006), stejně jako waLBerla. Hrubé post-kolizní populace se homogenně rozdělí do ghost vrstvy jemné úrovně, kterou během dvou jemných kroků proudí. Hrubá buňka dostane průměr populací, které do jejích 8 jemných buněk přitekly z jemné oblasti.
+* Ghost bloky: kolem bloků každé úrovně stojí bloky stejné třídy (`Block::ghost`), naplněné stavem jiné úrovně. Proto stávající kód sousedů (`nbBlock`, `nbLocal`, `local2globalShift`) funguje beze změn. Propagace a bilance probíhají jen v buňkách do vzdálenosti 2 od počítaných buněk.
+* Hmota se zachovává přesně (strojová přesnost). Rozdíl mezi tím, co hrubá úroveň odevzdá, a tím, co jemná převezme (a naopak), se vrací do hrubé buňky (`massCorr`). Rozdíl vzniká hlavně tam, kde rozhraní úrovní protíná stěnu.
+* Přeškálování nerovnovážné části populací (Dupuis–Chopard) bylo vyzkoušeno a odstraněno. V objemovém schématu porušuje zachování hybnosti po jednotlivých populacích a v Poiseuillově testu dávalo chybu +21 % / −11 %.
+* Volná hladina přes rozhraní: výměnu hmoty mezi rozhraními úrovní počítá jemná strana a hrubá buňka dostane opačnou hodnotu (`massAcc`). Konverze buněk (plyn → rozhraní, kapalina → rozhraní) se na ghost buňkách provedou hned a pošlou úrovni, která buňku vlastní. Totéž platí pro hmotu redistribuovanou do ghost buněk. Vazba kapalné buňky na plynovou ghost buňku (konverze dorazí o krok později) nepřenáší hmotu. Ghost bloky počítají lokální veličiny (typy rozhraní, hladiny, vyhlazení VOF, normály, křivost). Prázdné bloky se aktivují i přes ghost bloky.
+* Omezení: jen `problemID` 0 a 1, ne D2Q9, sudé `ni, nj, nk`. Kde rozhraní úrovní protíná stěnu kolmo na proud, dává Poiseuilleův kanál o výšce 32 hrubých buněk chybu průtoku 1–3,5 % (rovnoběžné rozhraní ~1e-3). Chyba je v rozích rozhraní a stěny, ne ve hmotě.
+* Výstupy: VTK obsahuje bloky všech úrovní v souřadnicích buněk úrovně 0, `fields_<iter>.bin` má u zahuštěné sítě verzi 2 s úrovní bloku, MLUPS počítá `2^L` kroků jemných úrovní.
+* Testy: `refinement_*` (klidový stav, odmítnutí nevyvážené sítě, zachování hmoty, Poiseuille s rozhraním rovnoběžným i kolmým na proud, volná hladina – protržení hráze přes rozhraní a klidová hladina).
+
 ## Neprovedeno
 
-* Ghost vrstvy bloků, AA-pattern (jediné pole populací) a SoA uspořádání – větší přestavba, která má smysl spolu se zahušťováním sítě.
-* Zahušťování sítě (oct-tree).
+* AA-pattern (jediné pole populací) a SoA uspořádání.
+* Zahušťování pro částice a vlákna (`problemID` 2, 21, 3, 4).
 
 ## Formát `fields_<iter>.bin`
 
 ```
-char[4] "LBMF", int32 verze (1), int32 iterace, double čas, int32 problemID,
-int32 nBlock, int32 ni, nj, nk, double Ch, int32 nFields, nFields × char[16] název
-pro každý blok: int32 bi, bj, bk; pro každé pole float32[ni*nj*nk] (index i + ni*j + ni*nj*k)
+char[4] "LBMF", int32 verze (1, zahuštěná síť 2), int32 iterace, double čas, int32 problemID,
+int32 nBlock, int32 ni, nj, nk, double Ch (úroveň 0), int32 nFields, nFields × char[16] název
+pro každý blok: int32 bi, bj, bk, [verze 2: int32 úroveň]; pro každé pole float32[ni*nj*nk] (index i + ni*j + ni*nj*k)
 pole: ux, uy, uz [m/s], p [Pa], type (typ buňky), u volné hladiny navíc vof, flag
 ```

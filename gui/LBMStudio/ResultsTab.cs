@@ -191,7 +191,7 @@ namespace LBMStudio
                 return;
             }
             int axis = cbResAxis.SelectedIndex;
-            int n = axis == 0 ? geom.Nx : (axis == 1 ? geom.Ny : geom.Nz);
+            int n = (axis == 0 ? geom.Nx : (axis == 1 ? geom.Ny : geom.Nz)) << FieldsData.DisplayLevel(geom);
             tbResSlice.Maximum = Math.Max(0, n - 1);
             tbResSlice.Value = n / 2;
         }
@@ -207,7 +207,7 @@ namespace LBMStudio
             {
                 try
                 {
-                    fields = FieldsData.Read(item.Value, geom.GX, geom.GY, geom.GZ);
+                    fields = FieldsData.Read(item.Value, geom.GX, geom.GY, geom.GZ, FieldsData.DisplayLevel(geom));
                     fieldsPath = item.Value;
                 }
                 catch (Exception ex)
@@ -230,9 +230,16 @@ namespace LBMStudio
             int axis = cbResAxis.SelectedIndex;
             int pos = tbResSlice.Value;
             int a1 = axis == 0 ? 1 : 0, a2 = axis == 2 ? 1 : 2;
-            int[] n = { geom.Nx, geom.Ny, geom.Nz };
+            // the fields of a refined mesh are assembled at a finer level, dx of the display cells
+            int sc = fields.Scale;
+            double dx = geom.Dx / sc;
+            int[] n = { geom.Nx * sc, geom.Ny * sc, geom.Nz * sc };
+            if (pos >= n[axis])
+            {
+                return; // slider of another display level, ResetSliceRange follows
+            }
             string[] names = { "x", "y", "z" };
-            lblResSlice.Text = names[axis] + " = " + Fmt.G(geom.Origin[axis] + (pos + 0.5) * geom.Dx, 4) + " m";
+            lblResSlice.Text = names[axis] + " = " + Fmt.G(geom.Origin[axis] + (pos + 0.5) * dx, 4) + " m";
             int na = n[a1], nb = n[a2];
             var vals = new float[na, nb];
             var kind = new byte[na, nb];
@@ -300,7 +307,7 @@ namespace LBMStudio
             sliceView.FixedRange = field == 5;
             sliceView.RangeMin = 0;
             sliceView.RangeMax = 1;
-            sliceView.SetData(vals, kind, na * geom.Dx, nb * geom.Dx, names[a1], names[a2],
+            sliceView.SetData(vals, kind, na * dx, nb * dx, names[a1], names[a2],
                 FieldLabels[field] + ", t = " + Fmt.G(fields.Time, 4) + " s", unit, vu, vv);
         }
 
@@ -327,7 +334,7 @@ namespace LBMStudio
             resultView.SetLayer("box", Viewer3D.BoxEdges(min, max, (max - min).Length * 0.0012, Colors.DimGray));
             // slice plane position
             int axis = cbResAxis.SelectedIndex;
-            double plane = geom.Origin[axis] + (tbResSlice.Value + 0.5) * geom.Dx;
+            double plane = geom.Origin[axis] + (tbResSlice.Value + 0.5) * geom.Dx / (1 << FieldsData.DisplayLevel(geom));
             var smin = new double[] { min.X, min.Y, min.Z };
             var smax = new double[] { max.X, max.Y, max.Z };
             smin[axis] = plane;

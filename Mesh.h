@@ -17,6 +17,7 @@
 #include <vector>
 #include <cmath>
 #include <unordered_map>
+#include <array>
 #include "Block.h"
 #include "BlockBasic.h"
 #include "BlockFreeSurface.h"
@@ -45,6 +46,23 @@ public:
 	int ni, nj, nk, nf;
 	int nIn, nBound;
 	int nBi, nBj, nBk;
+
+	// octree refinement (static): blocks of the level L have the cell size H / ni / 2^L and make 2^L steps per iteration
+	BlockGrid grid;
+	int maxLevel;
+	int nGhost;
+	vector<vector<int> > levelBlocks;    // slots of the computed blocks of each level
+	vector<int> blockLevel;              // level of the i-th block (blockIndex holds its coordinates at the level)
+	// ghost block: copy of the neighbourhood of the blocks of its level held by blocks of another level
+	struct GhostBlock {
+		int slot;
+		int source;                      // GHOST_FROM_COARSER or GHOST_FROM_FINER
+		int bc[3];                       // block coordinates
+		vector<int> srcBlock, srcLocal;  // per cell 1 (coarser) or 8 (finer) source cells, srcBlock -1 if missing
+		vector<int> near1, near2;        // cells touching a computed cell of the level, at most 2 cells from it
+	};
+	vector<vector<GhostBlock> > levelGhosts;
+	int curLevel;                        // level processed by evalBlocks, -1 for all levels
 	int* ex, * ey, * ez, * opp;
 	double* w;
 	int* indIn; // interior indexes
@@ -77,10 +95,13 @@ public:
 	void initBlocks();
 	void evalBlocks(int iter, int step);
 	void timeStep(int iter);
-	// block and local index of a cell given by global indexes, nullptr if the block does not exist
+	// block and local index of a cell given by global indexes of the level 0, nullptr if no computed block holds it
 	Block* cellAt(int gi, int gj, int gk, int& ind);
+	// block (computed or ghost) holding the cell given by global indexes of the level, nullptr if none
+	Block* cellAtLevel(int level, int gi, int gj, int gk, int& ind);
 	double getUmax();
 	double getCt();
+	long long cellUpdatesPerIteration();
 	void writeResultsToVTK(int iter);
 	void writeResultsToOutFile();
 	void writeBoundaryToVTK();
@@ -89,18 +110,60 @@ public:
 	void generateDistanceFunction();
 	void initHydrostaticPress();
 
-	// runs fn(block) for every (non empty) block in parallel
+	// runs fn(block) for every (non empty) block of the current level (all levels if curLevel < 0) in parallel
 	template <class F> void forBlocks(F fn, bool onlyActive = true) {
+		if (curLevel < 0) {
 #pragma omp parallel for schedule(dynamic)
-		for (int i = 0; i < nBlock; i++) {
-			Block* b = blocks[blockId[i]];
+			for (int i = 0; i < nBlock; i++) {
+				Block* b = blocks[blockId[i]];
+				if (!onlyActive || !b->isBlockEmpty) {
+					fn(b);
+				}
+			}
+			return;
+		}
+		const vector<int>& list = levelBlocks[curLevel];
+		int n = (int)list.size();
+#pragma omp parallel for schedule(dynamic)
+		for (int i = 0; i < n; i++) {
+			Block* b = blocks[list[i]];
 			if (!onlyActive || !b->isBlockEmpty) {
 				fn(b);
 			}
 		}
 	}
+	// runs fn(ghost) for the ghost blocks of the level with the given source (0 - all) in parallel
+	template <class F> void forGhosts(int level, int source, F fn) {
+		vector<GhostBlock>& list = levelGhosts[level];
+		int n = (int)list.size();
+#pragma omp parallel for schedule(dynamic)
+		for (int i = 0; i < n; i++) {
+			if (source == 0 || list[i].source == source) {
+				fn(list[i]);
+			}
+		}
+	}
 
 private:
+	Block* createBlock(int indBlock, int level, bool isFirst, const ParamMap& par);
+	void createGhosts(const vector<array<int, 4> >& list);
+	void initGhostMaps();
+	void initGhostNear();
+	void syncGhostGeometry();
+	// copies the state of the level - 1 to the ghosts of the level (populations: homogeneous explosion)
+	void explodeToGhosts(int level);
+	// fills the ghosts of the level from the level + 1 (populations: coalescence of the streamed ones)
+	void coalesceToGhosts(int level, bool streamed);
+	void syncGhosts();
+	void computeLost(int level);
+	void accountFsExchange(int level);
+	void forwardGhostRequests(int level);
+	void forwardGhostMass(int level);
+	void activateFromGhosts(int level);
+	void advanceFreeSurfaceLevel(int level, int iterLevel);
+	void accountInterface(int level);
+	void applyMassCorr(int level);
+	void advanceLevel(int level, int iterLevel);
 	string outputName(const string& prefix, int iter, const string& ext);
 	void writePvd(const string& fileName, const vector<pair<double, string> >& files);
 };
