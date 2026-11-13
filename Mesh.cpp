@@ -37,7 +37,7 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 	initHydroPress = Block::getParInt("initializeWithHydroPress", par, false, 0) != 0;
 	nSmoothStep = min(max(Block::getParInt("nSmoothStep", par, false, 2), 0), 2);
 	nIntIterParticle = Block::getParInt("nIntIter", par, false, 1);
-	gravityRotationOmega = Block::getParDouble("gravityRotationOmega", par, false, 0.89);
+	gravityRotationOmega = Block::getParDouble("gravityRotationOmega", par, false, 0);
 	vtkBinary = Block::getParInt("vtkBinary", par, false, 1) != 0;
 	writeFields = Block::getParInt("writeFields", par, false, 1) != 0;
 	compressResults = Block::getParInt("compressResults", par, false, 1) != 0;
@@ -128,12 +128,16 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 	switch (problemID) {
 	case 2:
 		particles = new LagrangeParticles(blocks, nBlock, nBlockMax, nBi, nBj, nBk, ni, nj, nk, par);
+		particles->grid = &grid;
 		particles->readInitParticlesDistribution(simulPath, b0->Ch, b0->Cu);
 		break;
 	case 21:
 		fibers = new LagrangeFibers(blocks, nBlock, nBlockMax, nBi, nBj, nBk, ni, nj, nk, par);
 		fibers->readInitFibersDistribution(simulPath, b0->Ch, b0->Cu);
 		break;
+	}
+	if ((problemID == 2 || problemID == 4) && gravityRotationOmega != 0) {
+		cout << "gravity (gx, gy) rotates around the z axis, omega = " << gravityRotationOmega << " rad/s" << endl;
 	}
 }
 
@@ -355,14 +359,11 @@ void Mesh::evalBlocks(int iter, int step) {
 		particles->interpolateFluidVelocity();
 		for (int s = 0; s < nIntIterParticle; s++) {
 			particles->particleParticleInteraction();
-			particles->particleWallInteraction();
 			particles->particleBarrierForce(iter);
 			particles->newParticlePosition(1.0 / nIntIterParticle);
 		}
 		particles->applyForce();
-		for (int i = 0; i < nBlock; i++) {
-			((BlockFreeSurfaceLagrangeParticles*)blocks[blockId[i]])->computeConcentrationAndFluidFraction();
-		}
+		forBlocks([](Block* b) { ((BlockFreeSurfaceLagrangeParticles*)b)->computeConcentrationAndFluidFraction(); }, false);
 		break;
 
 		// Lagrangian fibers
@@ -375,7 +376,16 @@ void Mesh::evalBlocks(int iter, int step) {
 		break;
 
 		// Eulerian particles with FVM
-	case 30:
+	case 30: {
+		// the particles of the cells emptied in the last step are passed to the liquid
+		bool any = false;
+		forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesFVM*)b)->releaseDryCells(); }, false);
+		for (int i = 0; i < nBlock; i++) {
+			any = any || ((BlockFreeSurfaceEulerParticlesFVM*)blocks[blockId[i]])->anyReleased;
+		}
+		if (any) {
+			forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesFVM*)b)->collectReleased(); }, false);
+		}
 		forBlocks([](Block* b) {
 			BlockFreeSurfaceEulerParticlesFVM* e = (BlockFreeSurfaceEulerParticlesFVM*)b;
 			e->computeGradP();
@@ -384,12 +394,17 @@ void Mesh::evalBlocks(int iter, int step) {
 		});
 		forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesFVM*)b)->computeParticlePressureGradient(); });
 		break;
+	}
 
 	case 31:
-		forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesFVM*)b)->computeNewParticleVelocityField(); });
+		forBlocks([](Block* b) {
+			BlockFreeSurfaceEulerParticlesFVM* e = (BlockFreeSurfaceEulerParticlesFVM*)b;
+			e->computeNewParticleVelocityField();
+			e->normalizeForce();
+		});
 		break;
 
-	case 32: // fluxes read the neighbour concentration, so they are applied in a separate pass
+	case 32: // the force is gathered from the neighbours; fluxes read the neighbour concentration, so they are applied in a separate pass
 		forBlocks([](Block* b) {
 			BlockFreeSurfaceEulerParticlesFVM* e = (BlockFreeSurfaceEulerParticlesFVM*)b;
 			e->smoothForce();
@@ -399,17 +414,28 @@ void Mesh::evalBlocks(int iter, int step) {
 		break;
 
 		// Eulerian particles with LBM
-	case 40:
+	case 40: {
+		// the particles of the cells emptied in the last step are passed to the liquid
+		bool any = false;
+		forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesLBM*)b)->releaseDryCells(); }, false);
+		for (int i = 0; i < nBlock; i++) {
+			any = any || ((BlockFreeSurfaceEulerParticlesLBM*)blocks[blockId[i]])->anyReleased;
+		}
+		if (any) {
+			forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesLBM*)b)->collectReleased(); }, false);
+		}
 		forBlocks([](Block* b) {
 			((BlockFreeSurfaceEulerParticlesLBM*)b)->computeGradU();
 			((BlockFreeSurfaceEulerParticlesLBM*)b)->interpolateFluidVelocity();
 		}, false);
 		break;
+	}
 
 	case 41:
 		forBlocks([](Block* b) {
 			((BlockFreeSurfaceEulerParticlesLBM*)b)->computeGradVOFp();
 			((BlockFreeSurfaceEulerParticlesLBM*)b)->computeNewParticleVelocityField(b->wallDistance, b->wallDistanceGradient);
+			((BlockFreeSurfaceEulerParticlesLBM*)b)->normalizeForce();
 		}, false);
 		break;
 
@@ -431,8 +457,8 @@ void Mesh::evalBlocks(int iter, int step) {
 			sum += b->concentrationSum;
 			cMax = max(cMax, b->concentrationMax);
 		}
-		nParticles = (int)sum;
-		maxParticlesInCell = (int)cMax;
+		nParticles = sum;
+		maxParticlesInCell = cMax;
 		break;
 	}
 
@@ -441,20 +467,23 @@ void Mesh::evalBlocks(int iter, int step) {
 		break;
 
 	case 202:
-	case 402: { // rotating gravity
+	case 402: { // gravity rotating around the z axis (rotating mould), the z component is kept
+		if (gravityRotationOmega == 0) {
+			break;
+		}
 		double t = getCt() * iter;
 		double c = cos(gravityRotationOmega * t);
 		double s = sin(gravityRotationOmega * t);
 		forBlocks([c, s](Block* b) {
 			b->G[0] = b->G0[0] * c - b->G0[1] * s;
 			b->G[1] = b->G0[0] * s + b->G0[1] * c;
-			b->G[2] = 0;
-		});
+			b->G[2] = b->G0[2];
+		}, false);
 		if (step == 202) {
 			double* G0 = particles->G0;
 			particles->G[0] = G0[0] * c - G0[1] * s;
 			particles->G[1] = G0[0] * s + G0[1] * c;
-			particles->G[2] = 0;
+			particles->G[2] = G0[2];
 		}
 		break;
 	}
@@ -1710,7 +1739,6 @@ void Mesh::writeResultsToVTK(int iter) {
 	}
 
 	if (problemID == 2) {
-		particles->boxParticles();
 		scalar("concentration", [](Block* b, int ind) { return ((BlockFreeSurfaceLagrangeParticles*)b)->concentration[ind]; });
 		scalar("particle_volume_fraction", [](Block* b, int ind) { return ((BlockFreeSurfaceLagrangeParticles*)b)->particleFraction[ind]; });
 	}

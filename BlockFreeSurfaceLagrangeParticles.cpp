@@ -1,16 +1,11 @@
-
 /*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
+ * File:   BlockFreeSurfaceLagrangeParticles.cpp
+ * Author: obublik
+ *
+ * Created on 2. února 2018, 12:27
+ *
+ * Free surface block coupled with the Lagrangian particles (LagrangeParticles).
  */
-
- /*
-  * File:   Block.cpp
-  * Author: obublik
-  *
-  * Created on 2. února 2018, 12:27
-  */
 
 #include "BlockFreeSurfaceLagrangeParticles.h"
 
@@ -27,8 +22,8 @@ BlockFreeSurfaceLagrangeParticles::BlockFreeSurfaceLagrangeParticles(bool isFirs
 	dpY = new double[ntot]();
 	dpZ = new double[ntot]();
 
-	nParticleBox = getParInt("maxParticlesInCell", par, false, 500);
-	particleBox = new int[ntot * (nParticleBox + 1)]();
+	nParticleBox = max(getParInt("maxParticlesInCell", par, false, 500), 1);
+	particleBox = new int[(size_t)ntot * (nParticleBox + 1)]();
 
 	concentration = new double[ntot]();
 	particleFraction = new double[ntot]();
@@ -74,6 +69,7 @@ double BlockFreeSurfaceLagrangeParticles::localTau(int ind) {
 	return min(max(tauLoc, tauMin), tauMax);
 }
 
+// the forces of the particles are consumed by the collision (the lists of particles are rebuilt by LagrangeParticles::boxParticles)
 void BlockFreeSurfaceLagrangeParticles::collision() {
 	BlockFreeSurface::collision();
 	for (int i = 0; i < nAll; i++) {
@@ -81,98 +77,55 @@ void BlockFreeSurfaceLagrangeParticles::collision() {
 		particleForceX[ind] = 0;
 		particleForceY[ind] = 0;
 		particleForceZ[ind] = 0;
-		particleBox[ind * (nParticleBox + 1)] = 0;
-		boxVolume[ind] = 0;
-		boxArea[ind] = 0;
 	}
 }
 
-
+// dp = grad(p) / 2 with p = rho / 3 in the liquid cells (interpolated to the particles for the output)
 void BlockFreeSurfaceLagrangeParticles::computeGradP() {
-	int indBlockShift = 0;
-	int indShift = 0;
-	double* auxRho = new double[nf];
-
-	for (int i = 0; i < nIn; i++) {
-		int ind = indIn[i];
-		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-			for (int dir = 1; dir < nf; dir++) {
-				int indShift = ind + (ni * nj) * ez[dir] + ni * ey[dir] + ex[dir];
-				bool dirExist = false;
-				if (!boundary[indShift] && (flagMap[indShift] == 1 || flagMap[indShift] == 3)) {
-					auxRho[dir] = Rho[indShift];
-					dirExist = true;
-				}
-				if (!dirExist) {
-					auxRho[dir] = Rho[ind];
-				}
-			}
-
-			double px = 0;
-			double py = 0;
-			double pz = 0;
-			for (int dir = 1; dir < nf; dir++) {
-				px += w[dir] * ex[dir] * auxRho[dir];
-				py += w[dir] * ey[dir] * auxRho[dir];
-				pz += w[dir] * ez[dir] * auxRho[dir];
-			}
-			dpX[ind] = 1.5 * px / 3;
-			dpY[ind] = 1.5 * py / 3;
-			dpZ[ind] = 1.5 * pz / 3;
+	for (int i = 0; i < nAll; i++) {
+		int ind = indAll[i];
+		if (flagMap[ind] != 1 && flagMap[ind] != 3) {
+			dpX[ind] = 0;
+			dpY[ind] = 0;
+			dpZ[ind] = 0;
+			continue;
 		}
-	}
-
-	for (int i = 0; i < nBound; i++) {
-		int ind = indBound[i];
-		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-			for (int dir = 1; dir < nf; dir++) {
-				int indBlockShift = nbBlock(ind, dir);
-				int indShift = nbLocal(ind, dir);
-				bool dirExist = false;
-				if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
-					int fm = ((BlockFreeSurface*)blocks[indBlockShift])->flagMap[indShift];
-					if (!(blocks[indBlockShift]->boundary[indShift]) && (fm == 1 || fm == 3)) {
-						auxRho[dir] = ((BlockFreeSurface*)blocks[indBlockShift])->Rho[indShift];
-						dirExist = true;
-					}
-				}
-				if (!dirExist) {
-					auxRho[dir] = Rho[ind];
+		double px = 0, py = 0, pz = 0;
+		for (int dir = 1; dir < nf; dir++) {
+			int bl = nbBlock(ind, dir);
+			int loc = nbLocal(ind, dir);
+			double rho = Rho[ind];
+			if (bl > -1 && bl < nBlockMax && blocks[bl] && !blocks[bl]->boundary[loc]) {
+				int fm = ((BlockFreeSurface*)blocks[bl])->flagMap[loc];
+				if (fm == 1 || fm == 3) {
+					rho = blocks[bl]->Rho[loc];
 				}
 			}
-
-			double px = 0;
-			double py = 0;
-			double pz = 0;
-			for (int dir = 1; dir < nf; dir++) {
-				px += w[dir] * ex[dir] * auxRho[dir];
-				py += w[dir] * ey[dir] * auxRho[dir];
-				pz += w[dir] * ez[dir] * auxRho[dir];
-			}
-			dpX[ind] = 1.5 * px / 3;
-			dpY[ind] = 1.5 * py / 3;
-			dpZ[ind] = 1.5 * pz / 3;
+			px += w[dir] * ex[dir] * rho;
+			py += w[dir] * ey[dir] * rho;
+			pz += w[dir] * ez[dir] * rho;
 		}
+		dpX[ind] = 0.5 * px;
+		dpY[ind] = 0.5 * py;
+		dpZ[ind] = 0.5 * pz;
 	}
 }
 
+// number of particles and their volume fraction averaged over the cell and its neighbours
 void BlockFreeSurfaceLagrangeParticles::computeConcentrationAndFluidFraction() {
 	for (int i = 0; i < nAll; i++) {
 		int ind = indAll[i];
-		int indBlockShift = 0;
-		int indShift = 0;
 		concentration[ind] = particleBox[ind * (nParticleBox + 1)];
 		particleFraction[ind] = boxVolume[ind];
 		int sum = 1;
 		for (int dir = 1; dir < nf; dir++) {
-			indBlockShift = nbBlock(ind, dir);
-			indShift = nbLocal(ind, dir);
-			if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
-				if (!(blocks[indBlockShift]->boundary[indShift])) {
-					concentration[ind] += ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->particleBox[indShift * (nParticleBox + 1)];
-					particleFraction[ind] += ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->boxVolume[indShift];
-					sum++;
-				}
+			int bl = nbBlock(ind, dir);
+			int loc = nbLocal(ind, dir);
+			if (bl > -1 && bl < nBlockMax && blocks[bl] && !blocks[bl]->boundary[loc]) {
+				BlockFreeSurfaceLagrangeParticles* b = (BlockFreeSurfaceLagrangeParticles*)blocks[bl];
+				concentration[ind] += b->particleBox[loc * (nParticleBox + 1)];
+				particleFraction[ind] += b->boxVolume[loc];
+				sum++;
 			}
 		}
 		concentration[ind] /= sum;

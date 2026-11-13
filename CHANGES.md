@@ -9,7 +9,7 @@ build.bat            # Visual Studio 2022 (MSVC, OpenMP /openmp:llvm)
 build.bat mingw      # MSYS2 g++ + Ninja, statically linked exe
 ```
 
-CMake builds `cLBMnet.exe` (the solver) and `lbm_tests.exe` (33 unit tests, run them in the build folder, optionally with a name filter).
+CMake builds `cLBMnet.exe` (the solver) and `lbm_tests.exe` (51 unit tests, run them in the build folder, optionally with a name filter).
 
 Graphical interface: `gui/build_gui.bat` → `gui/bin/LBMStudio.exe`, described in [gui/README.md](gui/README.md).
 
@@ -92,6 +92,54 @@ Static refinement driven by the geometry: the mesh is created once during genera
 * Limitations: only `problemID` 0 and 1, not D2Q9, even `ni, nj, nk`. Where the level interface crosses a wall perpendicular to the flow, a Poiseuille channel 32 coarse cells high has a flow rate error of 1–3.5 % (a parallel interface ~1e-3). The error is in the corners of the interface and the wall, not in the mass.
 * Output: VTK contains the blocks of all levels in the cell coordinates of level 0, `fields_<iter>.bin` of a refined mesh has version 2 with the block level, MLUPS counts the `2^L` steps of the fine levels.
 * Tests: `refinement_*` (fluid at rest, rejection of an unbalanced mesh, mass conservation, Poiseuille flow with the interface parallel and perpendicular to the flow, free surface – dam break across the interface and a free surface at rest).
+
+## Particles (`problemID` 2, 3, 4)
+
+Review of the three particle models on a simple geometry (closed or periodic box of 8³ blocks). The tests are `lagrange_*` and `euler_*` in `tests/test_particles.cpp`.
+
+| Model | `problemID` | Input | Parameters |
+|---|---|---|---|
+| Lagrangian particles | 2 | `init/particles.txt`: number of particles, then lines `x y z diameter density` (SI units) | `nIntIter` (sub-steps of the particles per LBM step), `maxParticlesInCell`, `couplingWayNumber`, `particleRestitution` (0–1, default 1), `cLES` |
+| Eulerian concentration, FVM | 3 | `init/concentration<block>.txt`: number of particles in each cell | `particleDiameter`, `particleDensity` |
+| Eulerian concentration, LBM | 4 | the same | `particleDiameter`, `particleDensity`, `particleDiffusivity` [m²/s], `overpackDiffusivity` |
+
+All models use the Schiller–Naumann drag with an implicit velocity update, gravity with buoyancy `(m − V ρ) g` and return the reaction of the drag to the fluid (two-way coupling).
+
+**Gravity.** `problemID` 2 and 4 can rotate `(gx, gy)` around the z axis with `gravityRotationOmega` [rad/s] (rotating mould). The original code always rotated with 0.89 rad/s and set the z component to zero, so `gz` was ignored. Now the default is 0 (no rotation), `gz` is kept and the solver prints a line when the rotation is active. Older cases of the rotating mould have to set `gravityRotationOmega = 0.89`.
+
+Fixed (value before → after in the tests):
+
+| Where | Bug | Result |
+|---|---|---|
+| Lagrange, output | `writeResultsToVTK` filled the cell lists of particles again, the next step counted every particle twice (double repulsive force and concentration) – the result depended on `saveRate` | identical with and without output |
+| Lagrange, walls | a particle closer to a wall than its radius was frozen for ever (also on vertical walls and in a tangential flow); the reflection also turned particles moving away back to the wall | the particle is moved to the distance d/2 along the wall normal, the normal velocity is reflected (`particleRestitution`), the tangential motion is kept |
+| Lagrange, force spreading | the weights of the cells in walls and in the gas were dropped (21 % of the kernel for a particle 0.6 cell above a wall), `3.1415` instead of π (momentum error 8.5e-5) | weights normalised by `Σ w·vof`, momentum of fluid + particle conserved to 2e-14 |
+| Lagrange, gas | the force of the last step in the liquid (uninitialised memory at the start) was applied to the fluid for ever, the collision force kept growing | no force outside of the liquid |
+| Lagrange, domain | no range check of the block index: a particle outside of the domain was mapped to another block; particles in empty blocks overflowed the cell lists | `LagrangeParticles::locate`, periodic directions wrap the particle |
+| Lagrange, sub-steps | only the force of the last sub-step reached the fluid | impulse summed over the sub-steps |
+| Lagrange | missing `particles.txt` left the number of particles uninitialised; arrays freed with `delete` | error message, `std::vector` |
+| all models | `computeGrad*` leaked `new double[nf]` in every block and step | no allocation |
+| FVM, limiter | the gradient ratio was taken from the wrong side for a negative face velocity: concentration −4.8 % … +8.8 % of c0 in the settling test | flux evaluated from the upwind cell: 0 … 1.000 c0, conservation 1e-14 |
+| FVM, force | `smoothForce` wrote into the neighbouring blocks from parallel threads (results differed by 1e-5 between 1 and 8 threads) | gather form, identical results |
+| FVM, LBM | particle velocity only where `c > 1e-3` (`1e-4`), zero or fluid velocity elsewhere – dilute suspensions did not settle and fronts were slowed down | the velocity field of a single particle is computed in all liquid cells |
+| FVM, LBM | force spread to walls and gas was lost | conservative (`normalizeForce` + `smoothForce`), sum of the force 1.000 |
+| FVM, LBM | particles of a cell that lost the liquid stayed in the gas: −12 % (FVM) and −18 % (LBM) of the particles in a dam break | they are passed to the liquid cells around (`releaseDryCells`, `collectReleased`): 1e-15 and 1e-6 |
+| LBM | diffusivity 1.4 times the prescribed one (`taus = ½ + 3D`, but the equilibrium has `c_s² = 1/(3θ)`) | `taus = ½ + 3θD`, measured 0.02003 for 0.02 |
+| LBM | gradient of the particle velocity (convective term) 6 times smaller than it should be | exact for a linear field |
+| LBM | D3Q15 lost all particles (rest weight `1/3` hard coded, negative rest population for θ = 1/1.4) | `w[0]`, θ limited from below; D3Q19, D3Q15 and D2Q9 conserve to 1e-9 |
+| LBM | the fluid velocity seen by the particles was zero in the interface cells | defined in all liquid cells |
+| LBM | particles in the cells next to a wall moved with the fluid, so they did not settle along vertical walls (55 % of the settling distance in a column 8 cells wide) | only the velocity towards the wall is limited, 99 % of the analytic distance |
+
+Results of the settling tests (sphere, Schiller–Naumann terminal velocity): slip velocity of the Lagrangian particle +0.02 %, settling distance of the concentration −1.0 % (FVM) and −1.0 % (LBM).
+
+Known properties and limits:
+
+* Lagrange: the particle is a point with a drag law. Its own reaction force drags the fluid along (a particle of 0.8 cell settled 19 % faster than the terminal velocity in the test), so the particles should be clearly smaller than a cell.
+* Lagrange: the repulsive force between particles `10 / Ca · sqrt(1.5 d − L)` does not depend on the mass of the particles, it is not a contact model; in a periodic box particles do not interact across the boundary. Inlets and outlets are walls for the particles.
+* Euler: the concentration is the number of particles per cell, also in the interface cells (it is not related to the fill level). FVM has no packing limit (`PP = 0`), LBM limits it with `overpackDiffusivity` (dimensionless, in lattice units) and adds an artificial diffusion `|c'' |/1000` that depends on the units of the concentration.
+* Euler LBM: `G·epsF` together with the reaction of the drag counts the buoyancy of the particles twice for a large volume fraction; `particleInterForces` and the fields `dp`, `dc`, `gVOFp` are computed or read but not used.
+* The force of the particles enters the fluid as `F·vof/ρ` (interface cells get less).
+* Lagrangian fibers (`problemID` 21) and the files `LagrangeParticlesVar2/3` (not built) were not reviewed.
 
 ## Not done
 

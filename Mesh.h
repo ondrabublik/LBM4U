@@ -73,8 +73,8 @@ public:
 	int* indBound; // boundary indexes
 	int* indAll;
 	double massTot;
-	int nParticles;
-	int maxParticlesInCell;
+	double nParticles;         // Eulerian particles (problemID 4): number of particles in the liquid
+	double maxParticlesInCell; // and their largest number in a cell
 	long long activeCellsNumTot;
 	int nSmoothStep;
 	int nIntIterParticle;

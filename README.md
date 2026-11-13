@@ -105,7 +105,7 @@ lbm_tests.exe              :: all tests
 lbm_tests.exe refinement   :: only tests whose name contains "refinement"
 ```
 
-The tests cover the collision operators, Poiseuille flow (TRT/MRT accuracy), the free surface (mass conservation, dam break, fluid at rest) and the grid refinement.
+The tests cover the collision operators, Poiseuille flow (TRT/MRT accuracy), the free surface (mass conservation, dam break, fluid at rest), the grid refinement and the particle models (settling velocity, conservation of momentum and of the number of particles, wall contact).
 
 The GUI has an automatic test of the whole chain (import, mesh, simulation, results, screenshots):
 

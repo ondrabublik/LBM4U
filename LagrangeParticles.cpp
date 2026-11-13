@@ -1,16 +1,23 @@
 /*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
+ * File:   LagrangeParticles.cpp
+ * Author: obublik
  */
 
 #include "LagrangeParticles.h"
 #include "Block.h"
 #include "BlockFreeSurfaceLagrangeParticles.h"
+#include <cmath>
+#include <stdexcept>
 
 using namespace std;
 
-LagrangeParticles::LagrangeParticles(Block** blocks, int nBlock, int nBlockMax, int nBi, int nBj, int nBk, int ni, int nj, int nk, unordered_map<string, string> par) {
+typedef BlockFreeSurfaceLagrangeParticles LagBlock;
+
+namespace {
+	const double PI = 3.14159265358979323846;
+}
+
+LagrangeParticles::LagrangeParticles(Block** blocks, int nBlock, int nBlockMax, int nBi, int nBj, int nBk, int ni, int nj, int nk, const ParamMap& par) {
 	this->blocks = blocks;
 	this->nBlock = nBlock;
 	this->nBlockMax = nBlockMax;
@@ -21,128 +28,223 @@ LagrangeParticles::LagrangeParticles(Block** blocks, int nBlock, int nBlockMax, 
 	this->nj = nj;
 	this->nk = nk;
 
-	Block b;
-	Cu = b.getParDouble("uMax", par, true, 0) / 0.1;
-	Ch = b.getParDouble("H", par, true, 0) / (this->ni);
+	Cu = Block::getParDouble("uMax", par, true, 0) / 0.1;
+	Ch = Block::getParDouble("H", par, true, 0) / (this->ni);
 	Ct = Ch / Cu;
 	Ca = Ch / (Ct * Ct);
-	Crho = b.getParDouble("density", par, true, 0);
+	Crho = Block::getParDouble("density", par, true, 0);
 	Cf = Crho * Ch * Ch * Cu * Cu;
-	G = new double[3]{
-		b.getParDouble("gx",par, false, 0) / Ca, b.getParDouble("gy",par, false, 0) / Ca, b.getParDouble("gz",par, false, 0) / Ca
-	}; //gravity
-	G0 = new double[3]{
-		b.getParDouble("gx",par, false, 0) / Ca, b.getParDouble("gy",par, false, 0) / Ca, b.getParDouble("gz",par, false, 0) / Ca
-	}; //gravity
+	G[0] = G0[0] = Block::getParDouble("gx", par, false, 0) / Ca;
+	G[1] = G0[1] = Block::getParDouble("gy", par, false, 0) / Ca;
+	G[2] = G0[2] = Block::getParDouble("gz", par, false, 0) / Ca;
 
 	Cvis = Ch * Ch / Ct;
-	vLB = b.getParDouble("vKin", par, true, 0) / Cvis;
+	vLB = Block::getParDouble("vKin", par, true, 0) / Cvis;
+	restitution = min(max(Block::getParDouble("particleRestitution", par, false, 1.0), 0.0), 1.0);
 
 	interpLevel = 2;
 }
 
-LagrangeParticles::~LagrangeParticles() {
-	delete partX;
-	delete partY;
-	delete partZ;
-
-	delete veloX;
-	delete veloY;
-	delete veloZ;
+void LagrangeParticles::resize(int n) {
+	nParticles = n;
+	for (vector<double>* v : { &partD, &partRho, &partMass, &partVolume, &partCrossection, &partX, &partY, &partZ,
+		&veloX, &veloY, &veloZ, &veloFX, &veloFY, &veloFZ, &pX, &pY, &pZ, &Gx, &Gy, &Gz, &FinterX, &FinterY, &FinterZ,
+		&volumeSolid, &areaSolid, &partWallNormalX, &partWallNormalY, &partWallNormalZ }) {
+		v->assign(n, 0.0);
+	}
+	nInter.assign(n, 1);
+	inGas.assign(n, 0);
 }
 
+// kinetic energy of the particles [J]
 void LagrangeParticles::getParticlesInfo() {
 	double kinEnergy = 0;
 	for (int i = 0; i < nParticles; i++) {
-		kinEnergy += sqrt(veloX[i] * veloX[i] + veloY[i] * veloY[i] + veloZ[i] * veloZ[i]);
+		kinEnergy += 0.5 * partMass[i] * (veloX[i] * veloX[i] + veloY[i] * veloY[i] + veloZ[i] * veloZ[i]);
 	}
-	cout << "Kinetic energy: " << kinEnergy << endl;
+	cout << "Kinetic energy of the particles: " << kinEnergy * Crho * Ch * Ch * Ch * Cu * Cu << " J" << endl;
 }
 
+bool LagrangeParticles::locate(double x, double y, double z, Cell& c) const {
+	if (!(std::isfinite(x) && std::isfinite(y) && std::isfinite(z))) {
+		return false;
+	}
+	double fb[3] = { floor(x / ni), floor(y / nj), floor(z / nk) };
+	for (double v : fb) {
+		if (fabs(v) > 1e9) {
+			return false;
+		}
+	}
+	int iB = (int)fb[0], jB = (int)fb[1], kB = (int)fb[2];
+	if (grid) {
+		c.bl = grid->find(0, iB, jB, kB); // wraps the periodic directions
+	}
+	else {
+		bool in = iB >= 0 && iB < nBi && jB >= 0 && jB < nBj && kB >= 0 && kB < nBk;
+		c.bl = in ? (nBi * nBj) * kB + nBi * jB + iB : -1;
+	}
+	if (c.bl < 0 || c.bl >= nBlockMax || !blocks[c.bl]) {
+		return false;
+	}
+	c.x = x - fb[0] * ni;
+	c.y = y - fb[1] * nj;
+	c.z = z - fb[2] * nk;
+	c.i = min(max((int)c.x, 0), ni - 1);
+	c.j = min(max((int)c.y, 0), nj - 1);
+	c.k = min(max((int)c.z, 0), nk - 1);
+	return true;
+}
+
+template <class F> void LagrangeParticles::liquidCells(const Cell& c, F fn) {
+	Block* b0 = blocks[c.bl];
+	int indC = (ni * nj) * c.k + ni * c.j + c.i;
+	for (int k = -interpLevel; k <= interpLevel; k++) {
+		double wk = delta(c.k + k + 0.5 - c.z);
+		if (wk == 0) {
+			continue;
+		}
+		for (int j = -interpLevel; j <= interpLevel; j++) {
+			double wj = wk * delta(c.j + j + 0.5 - c.y);
+			if (wj == 0) {
+				continue;
+			}
+			for (int i = -interpLevel; i <= interpLevel; i++) {
+				double weight = wj * delta(c.i + i + 0.5 - c.x);
+				if (weight == 0) {
+					continue;
+				}
+				int ip = c.i + i, jp = c.j + j, kp = c.k + k;
+				int bl = c.bl, ind;
+				if (ip > -1 && ip < ni && jp > -1 && jp < nj && kp > -1 && kp < nk) {
+					ind = (ni * nj) * kp + ni * jp + ip;
+				}
+				else {
+					b0->local2globalShift(c.bl, indC, bl, ind, i, j, k);
+					if (bl < 0 || bl >= nBlockMax || !blocks[bl]) {
+						continue;
+					}
+				}
+				LagBlock* b = (LagBlock*)blocks[bl];
+				if (!b->boundary[ind] && (b->flagMap[ind] == 1 || b->flagMap[ind] == 3)) {
+					fn(b, ind, weight);
+				}
+			}
+		}
+	}
+}
+
+// one step of the equation of motion (implicit drag) and of the position, dtP is a fraction of the LBM step
 void LagrangeParticles::newParticlePosition(double dtP) {
 #pragma omp parallel for schedule(guided)
 	for (int i = 0; i < nParticles; i++) {
-		double wallDist = wallDistance(i, partX[i], partY[i], partZ[i]);
+		double x0 = partX[i], y0 = partY[i], z0 = partZ[i];
+		double L0 = wallDistance(i, x0, y0, z0);
+		double n0[3] = { partWallNormalX[i], partWallNormalY[i], partWallNormalZ[i] };
 		if (!inGas[i]) {
-			// fluid velocity correction on wall
-			if (wallDist < 1) {
-				double norm = partWallNormalX[i] * veloFX[i] + partWallNormalY[i] * veloFY[i] + partWallNormalZ[i] * veloFZ[i];
+			// the fluid does not flow into the wall
+			if (L0 >= 0 && L0 < 1) {
+				double norm = n0[0] * veloFX[i] + n0[1] * veloFY[i] + n0[2] * veloFZ[i];
 				if (norm < 0) {
-					veloFX[i] -= norm * partWallNormalX[i];
-					veloFY[i] -= norm * partWallNormalY[i];
-					veloFZ[i] -= norm * partWallNormalZ[i];
+					veloFX[i] -= norm * n0[0];
+					veloFY[i] -= norm * n0[1];
+					veloFZ[i] -= norm * n0[2];
 				}
 			}
 
-			// compute interaction force					
 			double Uslip = sqrt((veloX[i] - veloFX[i]) * (veloX[i] - veloFX[i]) + (veloY[i] - veloFY[i]) * (veloY[i] - veloFY[i]) + (veloZ[i] - veloFZ[i]) * (veloZ[i] - veloFZ[i]));
-			double Cd_mult_Uslip = cd(partD[i], Uslip);
-			double areaCorr = 1;
-			double coef = 0.5 * Cd_mult_Uslip * partCrossection[i] * areaCorr;
+			double coef = 0.5 * cd(partD[i], Uslip) * partCrossection[i];
 
 			veloX[i] = (veloX[i] * partMass[i] / dtP + coef * veloFX[i] + G[0] * (partMass[i] - partVolume[i]) + FinterX[i]) / (partMass[i] / dtP + coef);
 			veloY[i] = (veloY[i] * partMass[i] / dtP + coef * veloFY[i] + G[1] * (partMass[i] - partVolume[i]) + FinterY[i]) / (partMass[i] / dtP + coef);
 			veloZ[i] = (veloZ[i] * partMass[i] / dtP + coef * veloFZ[i] + G[2] * (partMass[i] - partVolume[i]) + FinterZ[i]) / (partMass[i] / dtP + coef);
 
-			Gx[i] = coef * (veloX[i] - veloFX[i]);
-			Gy[i] = coef * (veloY[i] - veloFY[i]);
-			Gz[i] = coef * (veloZ[i] - veloFZ[i]);
-
-			FinterX[i] = 0;
-			FinterY[i] = 0;
-			FinterZ[i] = 0;
-			nInter[i] = 1;
+			// reaction of the drag: impulse given to the fluid, summed over the sub-steps of the LBM step
+			Gx[i] += dtP * coef * (veloX[i] - veloFX[i]);
+			Gy[i] += dtP * coef * (veloY[i] - veloFY[i]);
+			Gz[i] += dtP * coef * (veloZ[i] - veloFZ[i]);
 		}
 		else {
 			veloX[i] += dtP * G[0];
 			veloY[i] += dtP * G[1];
 			veloZ[i] += dtP * G[2];
 		}
+		FinterX[i] = 0;
+		FinterY[i] = 0;
+		FinterZ[i] = 0;
+		nInter[i] = 1;
 
 		partX[i] += dtP * veloX[i];
 		partY[i] += dtP * veloY[i];
 		partZ[i] += dtP * veloZ[i];
 
-		// test of the next possition of the particle
-		if (wallDist < partD[i] / 2) {
-			double vx0 = veloX[i];
-			double vy0 = veloY[i];
-			double vz0 = veloZ[i];
-			double x0 = partX[i] - dtP * vx0;
-			double y0 = partY[i] - dtP * vy0;
-			double z0 = partZ[i] - dtP * vz0;
-			double norm = partWallNormalX[i] * vx0 + partWallNormalY[i] * vy0 + partWallNormalZ[i] * vz0;
+		wallContact(i, x0, y0, z0, L0, n0);
 
-			veloX[i] -= 2 * norm * partWallNormalX[i];
-			veloY[i] -= 2 * norm * partWallNormalY[i];
-			veloZ[i] -= 2 * norm * partWallNormalZ[i];
-
-			int n = 1;
-			while (wallDist < partD[i] / 2) {
-				partX[i] = x0 + dtP * (vx0 / n - norm * partWallNormalX[i]);
-				partY[i] = y0 + dtP * (vy0 / n - norm * partWallNormalY[i]);
-				partZ[i] = z0 + dtP * (vz0 / n - norm * partWallNormalZ[i]);
-				wallDist = wallDistance(i, partX[i], partY[i], partZ[i]);
-
-				if (n > 4) {
-					partX[i] = x0;
-					partY[i] = y0;
-					partZ[i] = z0;
-					veloX[i] = vx0;
-					veloY[i] = vy0;
-					veloZ[i] = vz0;
-					break;
+		if (grid) {
+			double size[3] = { (double)nBi * ni, (double)nBj * nj, (double)nBk * nk };
+			double* pos[3] = { &partX[i], &partY[i], &partZ[i] };
+			for (int d = 0; d < 3; d++) {
+				if (grid->periodic[d] && std::isfinite(*pos[d])) {
+					*pos[d] -= size[d] * floor(*pos[d] / size[d]);
 				}
-				n *= 2;
 			}
 		}
 	}
 }
 
+// The particle (a sphere of the radius d/2) must not penetrate the wall: it is moved back along the wall
+// normal to the distance d/2 and the velocity component towards the wall is reflected. The tangential
+// motion is kept, so the particle can slide along the wall.
+void LagrangeParticles::wallContact(int p, double x0, double y0, double z0, double L0, const double* n0) {
+	double r = partD[p] / 2;
+	double L = wallDistance(p, partX[p], partY[p], partZ[p]);
+	bool contact = false;
+	for (int it = 0; it < 4 && L >= 0 && L < r; it++) {
+		// the distance function is not exact near the edges, a few corrections are enough
+		contact = true;
+		partX[p] += (r - L) * partWallNormalX[p];
+		partY[p] += (r - L) * partWallNormalY[p];
+		partZ[p] += (r - L) * partWallNormalZ[p];
+		L = wallDistance(p, partX[p], partY[p], partZ[p]);
+	}
+	if (L >= 0) {
+		if (contact) {
+			double nx = partWallNormalX[p], ny = partWallNormalY[p], nz = partWallNormalZ[p];
+			double vn = nx * veloX[p] + ny * veloY[p] + nz * veloZ[p];
+			if (vn < 0) {
+				veloX[p] -= (1 + restitution) * vn * nx;
+				veloY[p] -= (1 + restitution) * vn * ny;
+				veloZ[p] -= (1 + restitution) * vn * nz;
+			}
+		}
+		return;
+	}
+	// the step ended inside of a wall or outside of the domain: back to the previous position
+	partX[p] = x0;
+	partY[p] = y0;
+	partZ[p] = z0;
+	partWallNormalX[p] = n0[0];
+	partWallNormalY[p] = n0[1];
+	partWallNormalZ[p] = n0[2];
+	if (L0 < 0) {
+		// the particle was placed outside of the fluid, it stays there
+		veloX[p] = veloY[p] = veloZ[p] = 0;
+		return;
+	}
+	double vn = n0[0] * veloX[p] + n0[1] * veloY[p] + n0[2] * veloZ[p];
+	if (vn < 0) {
+		veloX[p] -= (1 + restitution) * vn * n0[0];
+		veloY[p] -= (1 + restitution) * vn * n0[1];
+		veloZ[p] -= (1 + restitution) * vn * n0[2];
+	}
+	else if (vn == 0) {
+		veloX[p] = veloY[p] = veloZ[p] = 0; // no normal known, stop the particle
+	}
+}
+
+// fluid velocity (and the other fields) at the particles, starts the LBM step of the particles
 void LagrangeParticles::interpolateFluidVelocity() {
 #pragma omp parallel for
 	for (int p = 0; p < nParticles; p++) {
-		// save old velocities
 		veloFX[p] = 0;
 		veloFY[p] = 0;
 		veloFZ[p] = 0;
@@ -151,396 +253,194 @@ void LagrangeParticles::interpolateFluidVelocity() {
 		pZ[p] = 0;
 		volumeSolid[p] = 0;
 		areaSolid[p] = 0;
+		Gx[p] = 0;
+		Gy[p] = 0;
+		Gz[p] = 0;
 
-		// compute block indexes of particle position
-		double intX = partX[p] / ni;
-		if (intX < 0) {
-			intX -= 1;
+		Cell c;
+		if (!locate(partX[p], partY[p], partZ[p], c)) {
+			inGas[p] = 1; // outside of the domain: no coupling with the fluid
+			continue;
 		}
-		double intY = partY[p] / nj;
-		if (intY < 0) {
-			intY -= 1;
+		LagBlock* b0 = (LagBlock*)blocks[c.bl];
+		int ind0 = (ni * nj) * c.k + ni * c.j + c.i;
+		if (b0->boundary[ind0]) {
+			continue;
 		}
-		double intZ = partZ[p] / nk;
-		if (intZ < 0) {
-			intZ -= 1;
+		inGas[p] = !(b0->flagMap[ind0] == 1 || b0->flagMap[ind0] == 3);
+		if (inGas[p]) {
+			continue;
 		}
-		int iB = (int)intX;
-		int jB = (int)intY;
-		int kB = (int)intZ;
-		int bl = nBi * nBj * kB + nBi * jB + iB;
-		if (bl > -1 && bl < nBlockMax && blocks[bl]) {
-			int nParticleBox = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->nParticleBox;
-			int* particleBox = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->particleBox;
-			double* boxVolume = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->boxVolume;
-			double* boxArea = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->boxArea;
-			double* dpX = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->dpX;
-			double* dpY = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->dpY;
-			double* dpZ = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->dpZ;
-			int* flagMap = ((BlockFreeSurface*)blocks[bl])->flagMap;
-			bool* boundary = ((BlockFreeSurface*)blocks[bl])->boundary;
-			double* U = blocks[bl]->U;
-			double* V = blocks[bl]->V;
-			double* W = blocks[bl]->W;
-
-			// compute local particle coordinates on block
-			double x = (partX[p] - iB * ni);
-			double y = (partY[p] - jB * nj);
-			double z = (partZ[p] - kB * nk);
-
-			// compute local indexes in block of nearest cell
-			int iloc = (int)x;
-			int jloc = (int)y;
-			int kloc = (int)z;
-
-			int ind = (ni * nj) * kloc + ni * jloc + iloc;
-			if (!boundary[ind]) {
-				inGas[p] = true;
-				if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-					inGas[p] = false;
-
-					double sum = 0;
-					for (int i = -interpLevel; i < interpLevel + 1; i++) {
-						for (int j = -interpLevel; j < interpLevel + 1; j++) {
-							for (int k = -interpLevel; k < interpLevel + 1; k++) {
-								int ip = iloc + i;
-								int jp = jloc + j;
-								int kp = kloc + k;
-								double weight = delta(ip + 0.5 - x) * delta(jp + 0.5 - y) * delta(kp + 0.5 - z);
-								if (ip > -1 && ip < ni && jp > -1 && jp < nj && kp >-1 && kp < nk) { // inside block
-									int ind = (ni * nj) * kp + ni * jp + ip;
-									if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-										veloFX[p] += weight * U[ind];
-										veloFY[p] += weight * V[ind];
-										veloFZ[p] += weight * W[ind];
-										pX[p] += weight * dpX[ind];
-										pY[p] += weight * dpY[ind];
-										pZ[p] += weight * dpZ[ind];
-										volumeSolid[p] += weight * boxVolume[ind];
-										areaSolid[p] += weight * boxArea[ind];
-										sum += weight;
-									}
-								}
-								else { // outside block
-									int ind = (ni * nj) * kloc + ni * jloc + iloc;
-									int indBlockShift = 0;
-									int indShift = 0;
-									blocks[bl]->local2globalShift(bl, ind, indBlockShift, indShift, i, j, k);
-									if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
-										int fm = ((BlockFreeSurface*)blocks[indBlockShift])->flagMap[indShift];
-										if (fm == 1 || fm == 3) {
-											veloFX[p] += weight * ((BlockFreeSurface*)blocks[indBlockShift])->U[indShift];
-											veloFY[p] += weight * ((BlockFreeSurface*)blocks[indBlockShift])->V[indShift];
-											veloFZ[p] += weight * ((BlockFreeSurface*)blocks[indBlockShift])->W[indShift];
-											pX[p] += weight * ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->dpX[indShift];
-											pY[p] += weight * ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->dpY[indShift];
-											pZ[p] += weight * ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->dpZ[indShift];
-											volumeSolid[p] += weight * ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->boxVolume[indShift];
-											areaSolid[p] += weight * ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->boxArea[indShift];
-											sum += weight;
-										}
-									}
-								}
-							}
-						}
-					}
-
-					veloFX[p] /= sum;
-					veloFY[p] /= sum;
-					veloFZ[p] /= sum;
-					pX[p] /= sum;
-					pY[p] /= sum;
-					pZ[p] /= sum;
-					volumeSolid[p] /= sum;
-					areaSolid[p] /= sum;
-				}
-			}
+		double sum = 0, u = 0, v = 0, w = 0, px = 0, py = 0, pz = 0, vol = 0, area = 0;
+		liquidCells(c, [&](LagBlock* b, int ind, double weight) {
+			u += weight * b->U[ind];
+			v += weight * b->V[ind];
+			w += weight * b->W[ind];
+			px += weight * b->dpX[ind];
+			py += weight * b->dpY[ind];
+			pz += weight * b->dpZ[ind];
+			vol += weight * b->boxVolume[ind];
+			area += weight * b->boxArea[ind];
+			sum += weight;
+		});
+		if (sum > 0) {
+			veloFX[p] = u / sum;
+			veloFY[p] = v / sum;
+			veloFZ[p] = w / sum;
+			pX[p] = px / sum;
+			pY[p] = py / sum;
+			pZ[p] = pz / sum;
+			volumeSolid[p] = vol / sum;
+			areaSolid[p] = area / sum;
 		}
 	}
 }
 
 double LagrangeParticles::wallDistance(int p, double xin, double yin, double zin) {
-
 	double L = -1;
-
-	// compute block indexes of particle position
-	double intX = xin / ni;
-	if (intX < 0) {
-		intX -= 1;
+	Cell c;
+	if (!locate(xin, yin, zin, c)) {
+		return L;
 	}
-	double intY = yin / nj;
-	if (intY < 0) {
-		intY -= 1;
+	Block* b = blocks[c.bl];
+	int ind = (ni * nj) * c.k + ni * c.j + c.i;
+	if (b->boundary[ind]) {
+		return L;
 	}
-	double intZ = zin / nk;
-	if (intZ < 0) {
-		intZ -= 1;
+	// trilinear interpolation of the wall distance in the cell
+	const double* coeff = &b->wallDistancePolynome[8 * ind];
+	double x = c.x - c.i;
+	double y = c.y - c.j;
+	double z = c.z - c.k;
+	L = coeff[0] + coeff[1] * x + coeff[2] * y + coeff[3] * z + coeff[4] * x * y + coeff[5] * y * z + coeff[6] * z * x + coeff[7] * x * y * z;
+
+	double nx = coeff[1] + coeff[4] * y + coeff[6] * z + coeff[7] * y * z;
+	double ny = coeff[2] + coeff[4] * x + coeff[5] * z + coeff[7] * x * z;
+	double nz = coeff[3] + coeff[5] * y + coeff[6] * x + coeff[7] * x * y;
+	double norm = sqrt(nx * nx + ny * ny + nz * nz);
+	if (norm > 0) {
+		nx /= norm;
+		ny /= norm;
+		nz /= norm;
 	}
-	int iB = (int)intX;
-	int jB = (int)intY;
-	int kB = (int)intZ;
-	int bl = nBi * nBj * kB + nBi * jB + iB;
-	if (bl > -1 && bl < nBlockMax && blocks[bl]) {
-		// compute local particle coordinates on block
-		double x = (xin - iB * ni);
-		double y = (yin - jB * nj);
-		double z = (zin - kB * nk);
-
-		// compute local indexes in block of nearest cell
-		int iloc = (int)x;
-		int jloc = (int)y;
-		int kloc = (int)z;
-
-		int ind = (ni * nj) * kloc + ni * jloc + iloc;
-
-		bool* boundary = ((BlockFreeSurface*)blocks[bl])->boundary;
-		if (!boundary[ind]) {
-			double* coeff = blocks[bl]->wallDistancePolynome;
-
-			// wall normal
-			double* wd = blocks[bl]->wallDistance;
-			double* wdg = blocks[bl]->wallDistanceGradient;
-			//L = wd[ind] + wdg[3 * ind] * (x - (iloc + 0.5)) + wdg[3 * ind + 1] * (y - (jloc + 0.5)) + wdg[3 * ind + 2] * (z - (kloc + 0.5));
-
-			int ic = 8 * ind;
-			x = x - iloc;
-			y = y - jloc;
-			z = z - kloc;
-			L = coeff[ic] + coeff[ic + 1] * x + coeff[ic + 2] * y + coeff[ic + 3] * z + coeff[ic + 4] * x * y + coeff[ic + 5] * y * z + coeff[ic + 6] * z * x + coeff[ic + 7] * x * y * z;
-
-			partWallNormalX[p] = coeff[ic + 1] + coeff[ic + 4] * y + coeff[ic + 6] * z + coeff[ic + 7] * y * z;
-			partWallNormalY[p] = coeff[ic + 2] + coeff[ic + 4] * x + coeff[ic + 5] * z + coeff[ic + 7] * x * z;
-			partWallNormalZ[p] = coeff[ic + 3] + coeff[ic + 5] * y + coeff[ic + 6] * x + coeff[ic + 7] * x * y;
-
-			double norm = sqrt(partWallNormalX[p] * partWallNormalX[p] + partWallNormalY[p] * partWallNormalY[p] + partWallNormalZ[p] * partWallNormalZ[p]);
-
-			if (norm > 0) {
-				partWallNormalX[p] = partWallNormalX[p] / norm;
-				partWallNormalY[p] = partWallNormalY[p] / norm;
-				partWallNormalZ[p] = partWallNormalZ[p] / norm;
-			}
-		}
-	}
-	return L;
+	partWallNormalX[p] = nx;
+	partWallNormalY[p] = ny;
+	partWallNormalZ[p] = nz;
+	return max(L, 0.0);
 }
 
+// Spreads the impulse of the particles to the liquid cells around. The cell gets weight / sum(weight * vof)
+// of it and uses it as force * vof / rho (cellForce), so the whole impulse reaches the fluid also next to
+// the walls and to the free surface.
 void LagrangeParticles::applyForce() {
 	for (int p = 0; p < nParticles; p++) {
-		double intX = partX[p] / ni;
-		if (intX < 0) {
-			intX -= 1;
-		}
-		double intY = partY[p] / nj;
-		if (intY < 0) {
-			intY -= 1;
-		}
-		double intZ = partZ[p] / nk;
-		if (intZ < 0) {
-			intZ -= 1;
-		}
-		int iB = (int)intX;
-		int jB = (int)intY;
-		int kB = (int)intZ;
-		int bl = nBi * nBj * kB + nBi * jB + iB;
-		double x = (partX[p] - iB * ni);
-		double y = (partY[p] - jB * nj);
-		double z = (partZ[p] - kB * nk);
-		int iloc = (int)x;
-		int jloc = (int)y;
-		int kloc = (int)z;
-
 		double Fx = Gx[p];
 		double Fy = Gy[p];
 		double Fz = Gz[p];
-
-		if (bl > -1 && bl < nBlockMax && blocks[bl]) {
-			double* particleFx = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->particleForceX;
-			double* particleFy = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->particleForceY;
-			double* particleFz = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->particleForceZ;
-			int* flagMap = ((BlockFreeSurface*)blocks[bl])->flagMap;
-			for (int i = -interpLevel; i < interpLevel + 1; i++) {
-				for (int j = -interpLevel; j < interpLevel + 1; j++) {
-					for (int k = -interpLevel; k < interpLevel + 1; k++) {
-						int ip = iloc + i;
-						int jp = jloc + j;
-						int kp = kloc + k;
-						if (ip > -1 && ip < ni && jp > -1 && jp < nj && kp > -1 && kp < nk) { // inside block
-							int ind = (ni * nj) * kp + ni * jp + ip;
-							if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-								double weight = delta(iloc + 0.5 - x + i) * delta(jloc + 0.5 - y + j) * delta(kloc + 0.5 - z + k);
-								particleFx[ind] += weight * Fx;
-								particleFy[ind] += weight * Fy;
-								particleFz[ind] += weight * Fz;
-							}
-						}
-						else { // outside block
-							int ind = (ni * nj) * kloc + ni * jloc + iloc;
-							int indBlockShift = 0;
-							int indShift = 0;
-							blocks[bl]->local2globalShift(bl, ind, indBlockShift, indShift, i, j, k);
-							if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) {
-								int fm = ((BlockFreeSurface*)blocks[indBlockShift])->flagMap[indShift];
-								if (fm == 1 || fm == 3) {
-									double weight = delta(iloc + 0.5 - x + i) * delta(jloc + 0.5 - y + j) * delta(kloc + 0.5 - z + k);
-									((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->particleForceX[indShift] += weight * Fx;
-									((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->particleForceY[indShift] += weight * Fy;
-									((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->particleForceZ[indShift] += weight * Fz;
-								}
-							}
-						}
-					}
-				}
-			}
+		if (Fx == 0 && Fy == 0 && Fz == 0) {
+			continue;
 		}
+		Cell c;
+		if (!locate(partX[p], partY[p], partZ[p], c)) {
+			continue;
+		}
+		double sum = 0;
+		liquidCells(c, [&](LagBlock* b, int ind, double weight) {
+			sum += weight * min(max(b->vof[ind], 0.0), 1.0);
+		});
+		if (sum <= 0) {
+			continue;
+		}
+		sum = max(sum, BlockFreeSurface::FORCE_KERNEL_MIN);
+		liquidCells(c, [&](LagBlock* b, int ind, double weight) {
+			b->particleForceX[ind] += weight / sum * Fx;
+			b->particleForceY[ind] += weight / sum * Fy;
+			b->particleForceZ[ind] += weight / sum * Fz;
+		});
 	}
 }
 
+// lists of the particles in the cells (collisions, concentration)
 void LagrangeParticles::boxParticles() {
-	// put particles into cells box
-	for (int p = 0; p < nParticles; p++) {
-		double intX = partX[p] / ni;
-		if (intX < 0) {
-			intX -= 1;
+#pragma omp parallel for schedule(dynamic)
+	for (int s = 0; s < nBlockMax; s++) {
+		if (!blocks[s]) {
+			continue;
 		}
-		double intY = partY[p] / nj;
-		if (intY < 0) {
-			intY -= 1;
-		}
-		double intZ = partZ[p] / nk;
-		if (intZ < 0) {
-			intZ -= 1;
-		}
-		int iB = (int)intX;
-		int jB = (int)intY;
-		int kB = (int)intZ;
-		int bl = nBi * nBj * kB + nBi * jB + iB;
-		if (bl > -1 && bl < nBlockMax && blocks[bl]) { // particle is inside block
-			int nParticleBox = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->nParticleBox;
-			int* particleBox = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->particleBox;
-			double* boxVolume = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->boxVolume;
-			double* boxArea = ((BlockFreeSurfaceLagrangeParticles*)blocks[bl])->boxArea;
-
-			// compute local particle coordinates on block
-			double x = (partX[p] - iB * ni);
-			double y = (partY[p] - jB * nj);
-			double z = (partZ[p] - kB * nk);
-
-			// compute local indexes in block of nearest cell
-			int iloc = (int)x;
-			int jloc = (int)y;
-			int kloc = (int)z;
-
-			int ind = (ni * nj) * kloc + ni * jloc + iloc;
-			int indp = ind * (nParticleBox + 1);
-			if (particleBox[indp] < nParticleBox) {
-				particleBox[indp]++;
-				particleBox[indp + particleBox[indp]] = p;
-				boxVolume[ind] += partVolume[p];
-				boxArea[ind] += partCrossection[p];
-			}
-			else {
-				cout << "particle box overflow" << endl;
-			}
+		LagBlock* b = (LagBlock*)blocks[s];
+		for (int ind = 0; ind < b->ntot; ind++) {
+			b->particleBox[ind * (b->nParticleBox + 1)] = 0;
+			b->boxVolume[ind] = 0;
+			b->boxArea[ind] = 0;
 		}
 	}
-}
-
-void LagrangeParticles::particleWallInteraction() {
+	int overflow = 0;
 	for (int p = 0; p < nParticles; p++) {
-		double L = wallDistance(p, partX[p], partY[p], partZ[p]);
-		double wallGap = partD[p];
-		if (L > 0 && L < wallGap) {
-			double xi = 1 - abs(L - partD[p] / 2) / (wallGap - partD[p] / 2);
-			double Fwall = 0.05 * xi;
-			FwallX[p] = Fwall * partWallNormalX[p];
-			FwallY[p] = Fwall * partWallNormalY[p];
-			FwallZ[p] = Fwall * partWallNormalZ[p];
+		Cell c;
+		if (!locate(partX[p], partY[p], partZ[p], c)) {
+			continue;
+		}
+		LagBlock* b = (LagBlock*)blocks[c.bl];
+		int ind = (ni * nj) * c.k + ni * c.j + c.i;
+		int indp = ind * (b->nParticleBox + 1);
+		if (b->particleBox[indp] < b->nParticleBox) {
+			b->particleBox[indp]++;
+			b->particleBox[indp + b->particleBox[indp]] = p;
+			b->boxVolume[ind] += partVolume[p];
+			b->boxArea[ind] += partCrossection[p];
 		}
 		else {
-			FwallX[p] = 0;
-			FwallY[p] = 0;
-			FwallZ[p] = 0;
+			overflow++;
 		}
-
+	}
+	static bool warned = false;
+	if (overflow > 0 && !warned) {
+		warned = true;
+		cout << "warning: particle box overflow (" << overflow << " particles), increase maxParticlesInCell" << endl;
 	}
 }
 
+// repulsive forces between the particles of the neighbouring cells
 void LagrangeParticles::particleParticleInteraction() {
-	// get particles from surrounding boxes
 #pragma omp parallel for
 	for (int p = 0; p < nParticles; p++) {
-		double intX = partX[p] / ni;
-		if (intX < 0) {
-			intX -= 1;
+		Cell c;
+		if (!locate(partX[p], partY[p], partZ[p], c)) {
+			continue;
 		}
-		double intY = partY[p] / nj;
-		if (intY < 0) {
-			intY -= 1;
-		}
-		double intZ = partZ[p] / nk;
-		if (intZ < 0) {
-			intZ -= 1;
-		}
-		int iB = (int)intX;
-		int jB = (int)intY;
-		int kB = (int)intZ;
-		int indBlock = nBi * nBj * kB + nBi * jB + iB;
-		if (indBlock > -1 && indBlock < nBlockMax && blocks[indBlock]) { // particle is inside of the block
-			// compute local particle coordinates on block
-			double x = (partX[p] - iB * ni);
-			double y = (partY[p] - jB * nj);
-			double z = (partZ[p] - kB * nk);
-
-			// compute local indexes in block of nearest cell
-			int iloc = (int)x;
-			int jloc = (int)y;
-			int kloc = (int)z;
-			int ind = (ni * nj) * kloc + ni * jloc + iloc;
-
-			int indBlockShift = 0;
-			int indShift = 0;
-			for (int i = -1; i <= 1; i++) {
-				for (int j = -1; j <= 1; j++) {
-					for (int k = -1; k <= 1; k++) {
-						blocks[indBlock]->local2globalShift(indBlock, ind, indBlockShift, indShift, i, j, k);
-						if (indBlockShift > -1 && indBlockShift < nBlockMax && blocks[indBlockShift]) { // block exists
-							int nParticleBox = ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->nParticleBox;
-							int indShiftp = indShift * (nParticleBox + 1);
-							for (int ps = 0; ps < ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->particleBox[indShiftp]; ps++) {
-								int q = ((BlockFreeSurfaceLagrangeParticles*)blocks[indBlockShift])->particleBox[indShiftp + ps + 1];
-								//if (p > q) { // for simulation speed up
-								double nx = partX[p] - partX[q];
-								double ny = partY[p] - partY[q];
-								double nz = partZ[p] - partZ[q];
-								double L = sqrt(nx * nx + ny * ny + nz * nz);
-								if (L > 1e-10) {
-									nx /= L;
-									ny /= L;
-									nz /= L;
-								}
-								else {
-									nx = 0;
-									ny = 0;
-									nz = 0;
-								}
-								double uRel = nx * (veloX[p] - veloX[q]) + ny * (veloY[p] - veloY[q]) + nz * (veloZ[p] - veloZ[q]);
-								double avgD = (partD[p] + partD[q]) / 2;
-								double f = gammaPP(L, avgD, uRel);
-								double fx = f * nx;
-								double fy = f * ny;
-								double fz = f * nz;
-
-								FinterX[p] += fx;
-								FinterY[p] += fy;
-								FinterZ[p] += fz;
-								nInter[p]++;
-
-								//FinterX[q] -= fx;
-								//FinterY[q] -= fy;
-								//FinterZ[q] -= fz;
-							//}
-							}
+		int ind = (ni * nj) * c.k + ni * c.j + c.i;
+		for (int i = -1; i <= 1; i++) {
+			for (int j = -1; j <= 1; j++) {
+				for (int k = -1; k <= 1; k++) {
+					int bl, loc;
+					blocks[c.bl]->local2globalShift(c.bl, ind, bl, loc, i, j, k);
+					if (bl < 0 || bl >= nBlockMax || !blocks[bl]) {
+						continue;
+					}
+					LagBlock* b = (LagBlock*)blocks[bl];
+					const int* box = &b->particleBox[loc * (b->nParticleBox + 1)];
+					for (int ps = 0; ps < box[0]; ps++) {
+						int q = box[ps + 1];
+						if (q == p) {
+							continue;
 						}
+						double nx = partX[p] - partX[q];
+						double ny = partY[p] - partY[q];
+						double nz = partZ[p] - partZ[q];
+						double L = sqrt(nx * nx + ny * ny + nz * nz);
+						if (L <= 1e-10) {
+							continue;
+						}
+						nx /= L;
+						ny /= L;
+						nz /= L;
+						double uRel = nx * (veloX[p] - veloX[q]) + ny * (veloY[p] - veloY[q]) + nz * (veloZ[p] - veloZ[q]);
+						double avgD = (partD[p] + partD[q]) / 2;
+						double f = gammaPP(L, avgD, uRel);
+						FinterX[p] += f * nx;
+						FinterY[p] += f * ny;
+						FinterZ[p] += f * nz;
+						nInter[p]++;
 					}
 				}
 			}
@@ -548,11 +448,12 @@ void LagrangeParticles::particleParticleInteraction() {
 	}
 }
 
+// 4-point cosine delta function (Peskin)
 double LagrangeParticles::delta(double x) {
 	x = abs(x);
 	double y = 0;
-	if (x <= 2) {
-		y = (1 + cos(3.1415 * x / 2.0)) / 4.0;
+	if (x < 2) {
+		y = (1 + cos(PI * x / 2.0)) / 4.0;
 	}
 	return y;
 }
@@ -585,7 +486,7 @@ double LagrangeParticles::gammaWall(double x, double D) {
 }
 
 void LagrangeParticles::particleBarrierForce(int iter) {
-	// get particles from surrounding boxes
+	// temporary barrier holding the particles at the start of the simulation (switched off: tRemove = 0)
 	double t = iter * Ct;
 	double yBarier = 0.11;
 	double tRemove = 0;
@@ -600,93 +501,40 @@ void LagrangeParticles::particleBarrierForce(int iter) {
 	}
 }
 
+// init/particles.txt: the number of particles and the lines "x y z diameter density" in physical units
 void LagrangeParticles::readInitParticlesDistribution(string simulPath, double Ch, double Cu) {
-	string line;
 	string fileName = simulPath + "init/particles.txt";
-	try {
-		ifstream* myfile = new ifstream(fileName);
-		if (myfile->is_open()) {
-			getline(*myfile, line);
-			nParticles = stoi(line);
-			partD = new double[nParticles];
-			partRho = new double[nParticles];
-			partMass = new double[nParticles];
-			partVolume = new double[nParticles];
-			partCrossection = new double[nParticles];
-			partX = new double[nParticles];
-			partY = new double[nParticles];
-			partZ = new double[nParticles];
-			veloX = new double[nParticles];
-			veloY = new double[nParticles];
-			veloZ = new double[nParticles];
-			veloFX = new double[nParticles];
-			veloFY = new double[nParticles];
-			veloFZ = new double[nParticles];
-			veloX0 = new double[nParticles];
-			veloY0 = new double[nParticles];
-			veloZ0 = new double[nParticles];
-			Gx = new double[nParticles];
-			Gy = new double[nParticles];
-			Gz = new double[nParticles];
-			pX = new double[nParticles];
-			pY = new double[nParticles];
-			pZ = new double[nParticles];
-			FinterX = new double[nParticles];
-			FinterY = new double[nParticles];
-			FinterZ = new double[nParticles];
-			FwallX = new double[nParticles];
-			FwallY = new double[nParticles];
-			FwallZ = new double[nParticles];
-			volumeSolid = new double[nParticles];
-			areaSolid = new double[nParticles];
-			nInter = new int[nParticles];
-			partWallNormalX = new double[nParticles];
-			partWallNormalY = new double[nParticles];
-			partWallNormalZ = new double[nParticles];
-			partWallDistance = new double[nParticles];
-			inGas = new bool[nParticles];
-
-			for (int i = 0; i < nParticles; i++) {
-				getline(*myfile, line);
-				istringstream iss(line);
-				vector<string> tokens{ istream_iterator<string>{iss}, istream_iterator<string>{} };
-				partX[i] = stod(tokens[0]) / Ch;
-				partY[i] = stod(tokens[1]) / Ch;
-				partZ[i] = stod(tokens[2]) / Ch;
-				partD[i] = stod(tokens[3]) / Ch;
-				partRho[i] = stod(tokens[4]) / Crho;
-				partCrossection[i] = 3.1415 / 4 * partD[i] * partD[i];
-				partVolume[i] = 3.1415 / 6 * partD[i] * partD[i] * partD[i];
-				partMass[i] = partVolume[i] * partRho[i];
-				pX[i] = 0;
-				pY[i] = 0;
-				pZ[i] = 0;
-				veloX[i] = 0;
-				veloY[i] = 0;
-				veloZ[i] = 0;
-				veloX0[i] = 0;
-				veloY0[i] = 0;
-				veloZ0[i] = 0;
-				FinterX[i] = 0;
-				FinterY[i] = 0;
-				FinterZ[i] = 0;
-				nInter[i] = 1;
-				inGas[i] = false;
-			}
-		}
-		myfile->close();
-		delete myfile;
+	ifstream myfile(fileName);
+	if (!myfile.is_open()) {
+		throw runtime_error("file " + fileName + " with the particles not found");
 	}
-	catch (const std::exception& ex) {
-		cout << "Error in " << fileName << ": " << ex.what() << endl;
-		exit(EXIT_FAILURE);
+	string line;
+	int n = 0;
+	if (!getline(myfile, line) || !(istringstream(line) >> n) || n < 0) {
+		throw runtime_error("Error in " + fileName + ": the first line has to hold the number of particles");
+	}
+	resize(n);
+	for (int i = 0; i < n; i++) {
+		double x, y, z, d, rho;
+		if (!getline(myfile, line) || !(istringstream(line) >> x >> y >> z >> d >> rho) || !(d > 0) || !(rho > 0)) {
+			throw runtime_error("Error in " + fileName + ": particle " + to_string(i + 1) + " needs x y z diameter density");
+		}
+		partX[i] = x / Ch;
+		partY[i] = y / Ch;
+		partZ[i] = z / Ch;
+		partD[i] = d / Ch;
+		partRho[i] = rho / Crho;
+		partCrossection[i] = PI / 4 * partD[i] * partD[i];
+		partVolume[i] = PI / 6 * partD[i] * partD[i] * partD[i];
+		partMass[i] = partVolume[i] * partRho[i];
 	}
 	cout << nParticles << " Lagrangian particles were readed!" << endl;
 }
 
+// positions in the cells of the level 0 (as the mesh in output_*.vtu)
 void LagrangeParticles::saveParticlesPositionsToVTK(string simulPath, int iter) {
 	ofstream myfile;
-	myfile.open(simulPath + "result/output_particles" + std::to_string((int)(iter * Ct * 1000000)) + "us.vtk", ios::out);
+	myfile.open(simulPath + "result/output_particles" + std::to_string((long long)(iter * Ct * 1000000)) + "us.vtk", ios::out);
 	myfile << "# vtk DataFile Version 2.6\noutput file\nASCII\nDATASET UNSTRUCTURED_GRID\n";
 	myfile << "POINTS " << nParticles << " float\n";
 	for (int i = 0; i < nParticles; i++) {
@@ -694,11 +542,9 @@ void LagrangeParticles::saveParticlesPositionsToVTK(string simulPath, int iter) 
 	}
 	myfile << "\n";
 
-	int s = 0;
 	myfile << "CELLS " << nParticles << " " << 2 * nParticles << "\n";
 	for (int i = 0; i < nParticles; i++) {
-		myfile << "1 " << s << "\n";
-		s++;
+		myfile << "1 " << i << "\n";
 	}
 	myfile << "\n";
 

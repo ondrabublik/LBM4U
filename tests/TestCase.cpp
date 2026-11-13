@@ -122,10 +122,26 @@ unique_ptr<Mesh> buildMesh(const CaseSpec& spec) {
 							for (int k = 0; k < spec.nk; k++)
 								f << "1 0 0 0 " << spec.flag(bi * spec.ni + i, bj * spec.nj + j, bk * spec.nk + k) << "\n";
 				}
+				if (spec.concentration) {
+					ofstream f(sim + "init/concentration" + to_string(id) + ".txt");
+					f.precision(17);
+					for (int i = 0; i < spec.ni; i++)
+						for (int j = 0; j < spec.nj; j++)
+							for (int k = 0; k < spec.nk; k++)
+								f << spec.concentration(bi * spec.ni + i, bj * spec.nj + j, bk * spec.nk + k) << "\n";
+				}
 			}
 		}
 	}
 	bf.close();
+	if (!spec.particles.empty()) {
+		ofstream f(sim + "init/particles.txt");
+		f.precision(17);
+		f << spec.particles.size() << "\n";
+		for (auto& q : spec.particles) {
+			f << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << " " << q[4] << "\n";
+		}
+	}
 
 	Silence s;
 	ParamMap par = loadParamFile(sim + "parameters.txt");

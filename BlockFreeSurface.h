@@ -118,6 +118,50 @@ public:
 	// collision with the exact difference method forcing
 	void collideCell(int ind, const double* acc, double epsF, double tauLoc);
 
+	// runs fn(block, local index, weight) for the cells of the 3 x 3 x 3 neighbourhood of the cell that are not walls.
+	// The weights (1/4, 1/2, 1/4)^3 are the 4-point cosine delta function sampled at the cell centres (their sum is one).
+	template <class F> void stencil27(int ind, F fn) {
+		static const double kw[3] = { 0.25, 0.5, 0.25 };
+		int ri = ni > 1 ? 1 : 0, rj = nj > 1 ? 1 : 0, rk = nk > 1 ? 1 : 0;
+		bool inside = nbIndex[ind] < 0;
+		for (int k = -rk; k <= rk; k++) {
+			for (int j = -rj; j <= rj; j++) {
+				for (int i = -ri; i <= ri; i++) {
+					int bl = indBlock, loc = ind + (ni * nj) * k + ni * j + i;
+					if (!inside) {
+						local2globalShift(indBlock, ind, bl, loc, i, j, k);
+						if (bl < 0 || bl >= nBlockMax || !blocks[bl]) {
+							continue;
+						}
+					}
+					BlockFreeSurface* b = (BlockFreeSurface*)blocks[bl];
+					if (!b->boundary[loc]) {
+						fn(b, loc, kw[i + 1] * kw[j + 1] * kw[k + 1]);
+					}
+				}
+			}
+		}
+	}
+	// the same for the liquid cells (fluid or interface) only
+	template <class F> void liquidStencil(int ind, F fn) {
+		stencil27(ind, [&fn](BlockFreeSurface* b, int loc, double wgt) {
+			if (b->flagMap[loc] == 1 || b->flagMap[loc] == 3) {
+				fn(b, loc, wgt);
+			}
+		});
+	}
+	// lower limit of liquidKernelSum (an almost empty isolated cell must not get a huge acceleration)
+	static constexpr double FORCE_KERNEL_MIN = 0.1;
+	// part of the kernel that falls to the liquid, weighted by the fill level: a force spread with
+	// weight * vof / liquidKernelSum is conserved (the cells receive the acceleration force * vof / rho)
+	double liquidKernelSum(int ind) {
+		double s = 0;
+		liquidStencil(ind, [&s](BlockFreeSurface* b, int loc, double wgt) {
+			s += wgt * std::min(std::max(b->vof[loc], 0.0), 1.0);
+		});
+		return s;
+	}
+
 protected:
 	void initFreeSurface(bool isFirst, int viscosityModel, const ParamMap& par);
 	double curvatureDivergence(int ind);

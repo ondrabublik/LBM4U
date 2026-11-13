@@ -1,14 +1,12 @@
 /*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
-
-/* 
- * File:   lagrangeParticles.h
+ * File:   LagrangeParticles.h
  * Author: obublik
  *
  * Created on 9. ledna 2019, 14:27
+ *
+ * Lagrangian point particles coupled with the free surface LBM (problemID 2): drag (Schiller-Naumann),
+ * gravity and buoyancy, repulsive forces between the particles, reflection from the walls, the reaction
+ * of the drag is spread to the liquid cells around the particle.
  */
 
 #include <iostream>
@@ -29,53 +27,66 @@
 
 using namespace std;
 
+class BlockFreeSurfaceLagrangeParticles;
+
 class LagrangeParticles {
 public:
 
-    double Ch, Cu, Ct, Ca, Crho, Cvis, Cf;
+	double Ch, Cu, Ct, Ca, Crho, Cvis, Cf;
 	double vLB;
-    double *G, *G0;
-    Block **blocks;
-    int nBlock, nBlockMax;
-    int *blockMap;
-    int nBi, nBj, nBk;
-    int ni, nj, nk;
-    int nParticles;
-	double* partD, * partRho, * partMass, * partVolume, *partCrossection;
-	double* partX, * partY, * partZ;
-    double *veloX, *veloY, *veloZ;
-	double* veloFX, * veloFY, * veloFZ;
-	double* veloX0, * veloY0, * veloZ0;
-    double *pX, *pY, *pZ;
-	double* Gx, * Gy, * Gz;
-	double* FinterX, * FinterY, * FinterZ;
-	double* FwallX, * FwallY, * FwallZ;
-	double* volumeSolid, * areaSolid;
-	int* nInter;
-	double* partWallNormalX, *partWallNormalY, *partWallNormalZ, *partWallDistance;
-	bool* inGas;
+	double G[3], G0[3];
+	double restitution; // of the normal velocity at the walls (1 - elastic reflection)
+	Block** blocks;
+	const BlockGrid* grid = nullptr; // block grid of the mesh (periodicity), set by the Mesh
+	int nBlock, nBlockMax;
+	int nBi, nBj, nBk;
+	int ni, nj, nk;
+	int nParticles = 0;
+	// all quantities are in lattice units of the level 0, the fluid density is one
+	vector<double> partD, partRho, partMass, partVolume, partCrossection;
+	vector<double> partX, partY, partZ;
+	vector<double> veloX, veloY, veloZ;
+	vector<double> veloFX, veloFY, veloFZ;   // fluid velocity at the particle
+	vector<double> pX, pY, pZ;               // pressure gradient at the particle (output only)
+	vector<double> Gx, Gy, Gz;               // impulse given to the fluid during the LBM step
+	vector<double> FinterX, FinterY, FinterZ;
+	vector<double> volumeSolid, areaSolid;
+	vector<int> nInter;
+	vector<double> partWallNormalX, partWallNormalY, partWallNormalZ;
+	vector<char> inGas;                      // the particle is not in the liquid (free flight, no coupling)
 	int interpLevel;
-    
-    LagrangeParticles(Block **blocks, int nBlock, int nBlockMax, int nBi, int nBj, int nBk, int ni, int nj, int nk, unordered_map<string, string> par);
-    
-    ~LagrangeParticles();
 
-    void readInitParticlesDistribution(string simulPath, double Ch, double Cu);
-    void saveParticlesPositionsToVTK(string simulPath, int iter);
-    void interpolateFluidVelocity();
-    void applyForce();
+	LagrangeParticles(Block** blocks, int nBlock, int nBlockMax, int nBi, int nBj, int nBk, int ni, int nj, int nk, const ParamMap& par);
+
+	void readInitParticlesDistribution(string simulPath, double Ch, double Cu);
+	void saveParticlesPositionsToVTK(string simulPath, int iter);
+	void interpolateFluidVelocity();
+	void applyForce();
 	void boxParticles();
-    void newParticlePosition(double dt);
+	void newParticlePosition(double dt);
 	void particleParticleInteraction();
-	void particleWallInteraction();
 	double gammaPP(double L, double avgD, double uRel);
 	double gammaWall(double wallDistance, double D);
 	double delta(double x);
 	double cd(double d, double uSlip);
 	void getParticlesInfo();
 	void particleBarrierForce(int iter);
+	// distance of the point from the wall (-1 inside of a wall or outside of the domain), sets the wall normal of the particle
 	double wallDistance(int p, double x, double y, double z);
+
+	// cell holding a point: block slot, cell indexes and the coordinates of the point in the block
+	struct Cell {
+		int bl, i, j, k;
+		double x, y, z;
+	};
+	// false if no block holds the point
+	bool locate(double x, double y, double z, Cell& c) const;
+
+private:
+	void resize(int n);
+	// runs fn(block, cell, weight) for the liquid cells in the support of the delta function of the point
+	template <class F> void liquidCells(const Cell& c, F fn);
+	void wallContact(int p, double x0, double y0, double z0, double L0, const double* n0);
 };
 
 #endif /* LAGRANGEPARTICLES_H */
-

@@ -1,10 +1,4 @@
 /*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
-
-/* 
  * File:   BlockFreeSurfaceEulerParticlesFVM.h
  * Author: obublik
  *
@@ -27,25 +21,22 @@
 class BlockFreeSurfaceEulerParticlesFVM : public BlockFreeSurface {
 public:
 
-    double *concentration, *fluxConcentration;
-	double *UP, *VP, *WP;
-	double *PP;
+	double* concentration, * fluxConcentration; // number of particles in the cell
+	double* released;                           // particles of a cell without liquid given to the liquid cells around
+	bool anyReleased = false;
+	double* UP, * VP, * WP;                     // particle velocity
+	double* PP;
 	double* dPPx, * dPPy, * dPPz;
-	double *UF, *VF, *WF;
-	double *Gx, *Gy, *Gz;
-	double *GxSmooth, *GySmooth, *GzSmooth;
-	double *dpX, *dpY, *dpZ;
-	double *fcP;
+	double* UF, * VF, * WF;                     // fluid velocity seen by the particles
+	double* Gx, * Gy, * Gz;                     // force of the particles of the cell acting on the fluid
+	double* GxSmooth, * GySmooth, * GzSmooth;   // force spread to the liquid cells around
+	double* dpX, * dpY, * dpZ;
 	double dParticle, rhoParticle, crossectionParticle, volumeParticle, massParticle;
-	double *deltaValue = nullptr;
-	int interpLevel;
 	double Cmax;
-	int *exLW, *eyLW, *ezLW;
-	int *oppLW;
 
-    BlockFreeSurfaceEulerParticlesFVM(bool isFirst, Block **blocks, int nBlock, int nBlockMax, int *blockMap, int nBi, int nBj, int nBk, int indBlock, int level, int *indAll, int *indIn, int *indBound, int collisionModel, int viscosityModel, int nf, int *ex, int *ey, int *ez, double *w, int* opp, int ni, int nj, int nk, const ParamMap& par);
+	BlockFreeSurfaceEulerParticlesFVM(bool isFirst, Block** blocks, int nBlock, int nBlockMax, int* blockMap, int nBi, int nBj, int nBk, int indBlock, int level, int* indAll, int* indIn, int* indBound, int collisionModel, int viscosityModel, int nf, int* ex, int* ey, int* ez, double* w, int* opp, int ni, int nj, int nk, const ParamMap& par);
 
-    ~BlockFreeSurfaceEulerParticlesFVM();
+	~BlockFreeSurfaceEulerParticlesFVM();
 
 	void readInitConcentration(int id, string simulPath);
 	void collision();
@@ -54,16 +45,23 @@ public:
 	void computeNewParticleVelocityField();
 	double cd(double Uslip);
 	void interpolateFluidVelocity();
+	void normalizeForce();
 	void smoothForce();
-	double delta(double x);
 	void upwind();
-	// flux of concentration through face p (of the 6 LW directions) leaving cell ind
+	// flux of concentration through face p (of the 6 directions) leaving cell ind
 	double faceFlux(int ind, int p);
+	double upwindFlux(int ind, int p, BlockFreeSurfaceEulerParticlesFVM* bs, int loc, double Un);
 	void computeFlux();
 	void applyFlux();
+	// the particles follow the liquid: cells that lost the liquid release their particles (returns true if any),
+	// the liquid cells around collect them in a separate pass
+	bool releaseDryCells();
+	void collectReleased();
 	void computeParticlePressure();
 	void computeParticlePressureGradient();
+
+private:
+	void liquidGradient(const double* (*field)(Block*), double scale, double* outX, double* outY, double* outZ);
 };
 
 #endif /* BLOCKFREESURFACEEULERPARTICLES_H */
-

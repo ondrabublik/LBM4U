@@ -28,6 +28,10 @@ struct CaseSpec {
 	std::function<int(int, int, int)> flag;
 	// optional block existence filter
 	std::function<bool(int, int, int)> blockExists;
+	// Lagrangian particles (problemID 2): x, y, z, diameter, density in physical units -> init/particles.txt
+	std::vector<std::array<double, 5> > particles;
+	// Eulerian particles (problemID 3, 4): number of particles in a global cell -> init/concentration<id>.txt
+	std::function<double(int, int, int)> concentration;
 
 	// refined mesh: blocks (bi, bj, bk, level) replace the nBi x nBj x nBk grid, the functions below
 	// take the level and the global cell indexes of the level and replace cellType and flag

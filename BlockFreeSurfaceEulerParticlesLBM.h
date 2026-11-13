@@ -1,15 +1,9 @@
 /*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
+ * File:   BlockFreeSurfaceEulerParticlesLBM.h
+ * Author: obublik
+ *
+ * Created on 10. ledna 2019, 12:31
  */
-
- /*
-  * File:   BlockFreeSurfaceEulerParticlesLBM.h
-  * Author: obublik
-  *
-  * Created on 10. ledna 2019, 12:31
-  */
 
 #include <iostream>
 #include <fstream>
@@ -27,24 +21,23 @@
 class BlockFreeSurfaceEulerParticlesLBM : public BlockFreeSurface {
 public:
 
-	double* concentration, * gc, * g;
-	double* UP, * VP, * WP;
+	double* concentration, * gc, * g;           // number of particles in the cell and its populations
+	double* released;                           // particles of a cell without liquid given to the liquid cells around
+	bool anyReleased = false;
+	double* UP, * VP, * WP;                     // particle velocity
 	double* gUx, * gUy, * gUz, * gVx, * gVy, * gVz, * gWx, * gWy, * gWz;
-	double* UF, * VF, * WF;
-	double* Gx, * Gy, * Gz;
-	double* GxSmooth, * GySmooth, * GzSmooth;
+	double* UF, * VF, * WF;                     // fluid velocity seen by the particles
+	double* Gx, * Gy, * Gz;                     // force of the particles of the cell acting on the fluid
+	double* GxSmooth, * GySmooth, * GzSmooth;   // force spread to the liquid cells around
 	double* dpX, * dpY, * dpZ;
 	double* dcX, * dcY, * dcZ;
 	double* gVOFpX, * gVOFpY, * gVOFpZ;
 	double dParticle, rhoParticle, crossectionParticle, volumeParticle, massParticle;
 	double taus, diffusLB;
-	double* deltaValue = nullptr;
-	int interpLevel;
 	double concentrationLimit, interPartFCoef, concentrationSum, concentrationMax;
-	int couplingWayNumber;
 	double* tauDir;
 	double tauOverPack;
-	int *positiveDirs;
+	int* positiveDirs;
 	double theta;
 	double* user_def;
 
@@ -60,6 +53,10 @@ public:
 	void calculConcentration();
 	void collisionScalar();
 	void propagationScalar();
+	// the particles follow the liquid: cells that lost the liquid release their particles (returns true if any),
+	// the liquid cells around collect them in a separate pass
+	bool releaseDryCells();
+	void collectReleased();
 	void computeGradP();
 	void computeGradU();
 	void computeGradC();
@@ -67,12 +64,14 @@ public:
 	void computeNewParticleVelocityField(double* distance, double* gradDistance);
 	double cd(double Uslip);
 	void interpolateFluidVelocity();
+	void normalizeForce();
 	void smoothForce();
 	void setTau();
 	double computeTau(double cFor, double cMid, double cBack);
-	double delta(double x);
 	double limitFraction(double x);
+
+private:
+	void fieldGradient(const double* (*field)(Block*), double scale, bool liquidOnly, double* outX, double* outY, double* outZ);
 };
 
 #endif /* BLOCKFREESURFACEEULERPARTICLESLBM_H */
-
