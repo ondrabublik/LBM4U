@@ -120,6 +120,8 @@ public:
 
 	// runs fn(block, local index, weight) for the cells of the 3 x 3 x 3 neighbourhood of the cell that are not walls.
 	// The weights (1/4, 1/2, 1/4)^3 are the 4-point cosine delta function sampled at the cell centres (their sum is one).
+	// On a refined mesh a computed cell sees only the computed cells of its level (ghost cells are copies of another
+	// level, a force spread to them would be lost).
 	template <class F> void stencil27(int ind, F fn) {
 		static const double kw[3] = { 0.25, 0.5, 0.25 };
 		int ri = ni > 1 ? 1 : 0, rj = nj > 1 ? 1 : 0, rk = nk > 1 ? 1 : 0;
@@ -135,7 +137,7 @@ public:
 						}
 					}
 					BlockFreeSurface* b = (BlockFreeSurface*)blocks[bl];
-					if (!b->boundary[loc]) {
+					if (!b->boundary[loc] && (b->ghost == GHOST_NONE || ghost != GHOST_NONE)) {
 						fn(b, loc, kw[i + 1] * kw[j + 1] * kw[k + 1]);
 					}
 				}

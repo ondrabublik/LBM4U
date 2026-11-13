@@ -104,6 +104,8 @@ public:
 
 	double* G = nullptr, * G0 = nullptr; // gravity field
 	double velWall[3] = { 0, 0, 0 };     // velocity of moving walls
+	// 0 - the gravity acts only on the particles (a closed box full of liquid: the hydrostatic pressure is left out)
+	double fluidGravity = 1;
 	double velInlet[3] = { 0, 0, 0 };    // inlet velocity
 	double rhoOutlet = 1.0;              // outlet density
 	bool movingLidTop = true;            // domain boundary at z max moves with velWall

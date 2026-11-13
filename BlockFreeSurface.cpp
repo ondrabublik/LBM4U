@@ -127,9 +127,9 @@ BlockFreeSurface::~BlockFreeSurface() {
 }
 
 void BlockFreeSurface::cellForce(int ind, double* acc, double& epsF) {
-	acc[0] = G[0];
-	acc[1] = G[1];
-	acc[2] = G[2];
+	acc[0] = fluidGravity * G[0];
+	acc[1] = fluidGravity * G[1];
+	acc[2] = fluidGravity * G[2];
 	epsF = 1.0;
 }
 

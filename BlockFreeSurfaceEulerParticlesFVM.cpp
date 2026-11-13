@@ -27,6 +27,7 @@ BlockFreeSurfaceEulerParticlesFVM::BlockFreeSurfaceEulerParticlesFVM(bool isFirs
 	concentration = new double[ntot]();
 	fluxConcentration = new double[ntot]();
 	released = new double[ntot]();
+	exchangeCorr = new double[ntot]();
 
 	dpX = new double[ntot]();
 	dpY = new double[ntot]();
@@ -66,6 +67,7 @@ BlockFreeSurfaceEulerParticlesFVM::~BlockFreeSurfaceEulerParticlesFVM() {
 	delete[] concentration;
 	delete[] fluxConcentration;
 	delete[] released;
+	delete[] exchangeCorr;
 	delete[] dpX;
 	delete[] dpY;
 	delete[] dpZ;
@@ -114,9 +116,9 @@ void BlockFreeSurfaceEulerParticlesFVM::cellForce(int ind, double* acc, double& 
 	// smoothed drag is a force density, the exact difference method needs an acceleration
 	double rho = Rho[ind] > 0 ? Rho[ind] : 1.0;
 	epsF = 1.0;
-	acc[0] = G[0] + GxSmooth[ind] * vof[ind] / rho;
-	acc[1] = G[1] + GySmooth[ind] * vof[ind] / rho;
-	acc[2] = G[2] + GzSmooth[ind] * vof[ind] / rho;
+	acc[0] = fluidGravity * G[0] + GxSmooth[ind] * vof[ind] / rho;
+	acc[1] = fluidGravity * G[1] + GySmooth[ind] * vof[ind] / rho;
+	acc[2] = fluidGravity * G[2] + GzSmooth[ind] * vof[ind] / rho;
 }
 
 void BlockFreeSurfaceEulerParticlesFVM::collision() {
@@ -144,6 +146,9 @@ double BlockFreeSurfaceEulerParticlesFVM::faceFlux(int ind, int p) {
 	BlockFreeSurfaceEulerParticlesFVM* bs = (BlockFreeSurfaceEulerParticlesFVM*)blocks[bl];
 	if (bs->flagMap[loc] != 1 && bs->flagMap[loc] != 3) {
 		return 0;
+	}
+	if (ghost == GHOST_NONE && bs->ghost == GHOST_FROM_FINER) {
+		return 0; // the flux through a face of a finer level is computed by its cells (Mesh::forwardFluxFVM)
 	}
 	double Un = (bs->UP[loc] + UP[ind]) / 2 * exLW[p] + (bs->VP[loc] + VP[ind]) / 2 * eyLW[p] + (bs->WP[loc] + WP[ind]) / 2 * ezLW[p];
 	if (Un < 0) {
@@ -183,7 +188,18 @@ void BlockFreeSurfaceEulerParticlesFVM::computeFlux() {
 			continue;
 		}
 		for (int p = 0; p < 6; p++) {
-			fluxConcentration[ind] += faceFlux(ind, p);
+			double fl = faceFlux(ind, p);
+			fluxConcentration[ind] += fl;
+			if (fl != 0 && nbIndex[ind] >= 0) {
+				int bl, loc;
+				local2globalShift(indBlock, ind, bl, loc, exLW[p], eyLW[p], ezLW[p]);
+				if (blocks[bl]->ghost == GHOST_FROM_COARSER) {
+					// particles sent to (taken from) the coarser level, Mesh::forwardFluxFVM gives them to the coarser cell
+					double* acc = &((BlockFreeSurfaceEulerParticlesFVM*)blocks[bl])->exchangeCorr[loc];
+#pragma omp atomic
+					*acc += fl;
+				}
+			}
 		}
 	}
 }
@@ -191,8 +207,43 @@ void BlockFreeSurfaceEulerParticlesFVM::computeFlux() {
 void BlockFreeSurfaceEulerParticlesFVM::applyFlux() {
 	for (int i = 0; i < nAll; i++) {
 		int ind = indAll[i];
-		concentration[ind] -= fluxConcentration[ind];
+		concentration[ind] += exchangeCorr[ind] - fluxConcentration[ind];
+		exchangeCorr[ind] = 0;
 	}
+}
+
+void BlockFreeSurfaceEulerParticlesFVM::prolongCell(int ind, const Block* src, int sInd) {
+	BlockFreeSurface::prolongCell(ind, src, sInd);
+	const BlockFreeSurfaceEulerParticlesFVM* s = (const BlockFreeSurfaceEulerParticlesFVM*)src;
+	concentration[ind] = s->concentration[sInd] / 8;
+	UP[ind] = s->UP[sInd];
+	VP[ind] = s->VP[sInd];
+	WP[ind] = s->WP[sInd];
+	PP[ind] = s->PP[sInd];
+}
+
+void BlockFreeSurfaceEulerParticlesFVM::restrictCell(int ind, Block* const* src, const int* sInd) {
+	BlockFreeSurface::restrictCell(ind, src, sInd);
+	double c = 0, u = 0, v = 0, w3 = 0, pp = 0;
+	int n = 0;
+	for (int o = 0; o < 8; o++) {
+		const BlockFreeSurfaceEulerParticlesFVM* s = (const BlockFreeSurfaceEulerParticlesFVM*)src[o];
+		if (!s || s->boundary[sInd[o]]) {
+			continue;
+		}
+		int si = sInd[o];
+		c += s->concentration[si];
+		u += s->UP[si];
+		v += s->VP[si];
+		w3 += s->WP[si];
+		pp += s->PP[si];
+		n++;
+	}
+	concentration[ind] = c;
+	UP[ind] = n ? u / n : 0;
+	VP[ind] = n ? v / n : 0;
+	WP[ind] = n ? w3 / n : 0;
+	PP[ind] = n ? pp / n : 0;
 }
 
 bool BlockFreeSurfaceEulerParticlesFVM::releaseDryCells() {

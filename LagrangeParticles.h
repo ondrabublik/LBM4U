@@ -42,6 +42,7 @@ public:
 	int nBi, nBj, nBk;
 	int ni, nj, nk;
 	int nParticles = 0;
+	double dMax = 0; // largest diameter (range of the repulsive force)
 	// all quantities are in lattice units of the level 0, the fluid density is one
 	vector<double> partD, partRho, partMass, partVolume, partCrossection;
 	vector<double> partX, partY, partZ;
@@ -77,9 +78,10 @@ public:
 	// cell holding a point: block slot, cell indexes and the coordinates of the point in the block
 	struct Cell {
 		int bl, i, j, k;
+		int level = 0;   // refinement level of the block, the coordinates below are in its cells
 		double x, y, z;
 	};
-	// false if no block holds the point
+	// false if no computed block holds the point (the finest one is taken on a refined mesh)
 	bool locate(double x, double y, double z, Cell& c) const;
 
 private:

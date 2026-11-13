@@ -21,6 +21,7 @@ BlockFreeSurfaceEulerParticlesLBM::BlockFreeSurfaceEulerParticlesLBM(bool isFirs
 	gc = new double[ntot * nf]();
 	g = new double[ntot * nf]();
 	released = new double[ntot]();
+	exchangeCorr = new double[ntot]();
 
 	dpX = new double[ntot]();
 	dpY = new double[ntot]();
@@ -113,6 +114,7 @@ BlockFreeSurfaceEulerParticlesLBM::~BlockFreeSurfaceEulerParticlesLBM() {
 	delete[] gc;
 	delete[] g;
 	delete[] released;
+	delete[] exchangeCorr;
 	delete[] dpX;
 	delete[] dpY;
 	delete[] dpZ;
@@ -199,24 +201,94 @@ void BlockFreeSurfaceEulerParticlesLBM::computeInitDistributionScalar() {
 // streaming of the scalar populations, walls and the gas reflect them (no flux of particles)
 void BlockFreeSurfaceEulerParticlesLBM::propagationScalar() {
 	for (int i = 0; i < nAll; i++) {
+		propagateScalarCell(indAll[i]);
+	}
+}
+
+void BlockFreeSurfaceEulerParticlesLBM::propagateScalarCells(const vector<int>& cells) {
+	for (int ind : cells) {
+		propagateScalarCell(ind);
+	}
+}
+
+void BlockFreeSurfaceEulerParticlesLBM::applyExchangeCorr() {
+	for (int i = 0; i < nAll; i++) {
 		int ind = indAll[i];
-		if (flagMap[ind] != 1 && flagMap[ind] != 3) {
+		double dm = exchangeCorr[ind];
+		if (dm == 0) {
+			continue;
+		}
+		exchangeCorr[ind] = 0;
+		if (boundary[ind] || (flagMap[ind] != 1 && flagMap[ind] != 3)) {
 			continue;
 		}
 		for (int p = 0; p < nf; p++) {
-			int bl = nbBlock(ind, p);
-			int loc = nbLocal(ind, p);
-			bool open = bl > -1 && bl < nBlockMax && blocks[bl] && !blocks[bl]->boundary[loc];
-			if (open) {
-				int fm = ((BlockFreeSurface*)blocks[bl])->flagMap[loc];
-				open = fm == 1 || fm == 3;
-			}
-			if (open) {
-				g[nf * ind + opp[p]] = ((BlockFreeSurfaceEulerParticlesLBM*)blocks[bl])->gc[nf * loc + opp[p]];
-			}
-			else {
-				g[nf * ind + opp[p]] = gc[nf * ind + p];
-			}
+			g[nf * ind + p] += w[p] * dm;
+		}
+	}
+}
+
+void BlockFreeSurfaceEulerParticlesLBM::prolongCell(int ind, const Block* src, int sInd) {
+	BlockFreeSurface::prolongCell(ind, src, sInd);
+	const BlockFreeSurfaceEulerParticlesLBM* s = (const BlockFreeSurfaceEulerParticlesLBM*)src;
+	concentration[ind] = s->concentration[sInd] / 8;
+	for (int p = 0; p < nf; p++) {
+		gc[nf * ind + p] = s->gc[nf * sInd + p] / 8;
+		g[nf * ind + p] = s->g[nf * sInd + p] / 8;
+		tauDir[nf * ind + p] = s->tauDir[nf * sInd + p];
+	}
+	UP[ind] = s->UP[sInd];
+	VP[ind] = s->VP[sInd];
+	WP[ind] = s->WP[sInd];
+}
+
+void BlockFreeSurfaceEulerParticlesLBM::restrictCell(int ind, Block* const* src, const int* sInd) {
+	BlockFreeSurface::restrictCell(ind, src, sInd);
+	double c = 0, u = 0, v = 0, w3 = 0;
+	double gs[27] = { 0 };
+	int n = 0;
+	for (int o = 0; o < 8; o++) {
+		const BlockFreeSurfaceEulerParticlesLBM* s = (const BlockFreeSurfaceEulerParticlesLBM*)src[o];
+		if (!s || s->boundary[sInd[o]]) {
+			continue;
+		}
+		int si = sInd[o];
+		c += s->concentration[si];
+		u += s->UP[si];
+		v += s->VP[si];
+		w3 += s->WP[si];
+		for (int p = 0; p < nf; p++) {
+			gs[p] += s->gc[nf * si + p];
+		}
+		n++;
+	}
+	concentration[ind] = c;
+	UP[ind] = n ? u / n : 0;
+	VP[ind] = n ? v / n : 0;
+	WP[ind] = n ? w3 / n : 0;
+	for (int p = 0; p < nf; p++) {
+		gc[nf * ind + p] = gs[p];
+		tauDir[nf * ind + p] = taus;
+	}
+}
+
+void BlockFreeSurfaceEulerParticlesLBM::propagateScalarCell(int ind) {
+	if (flagMap[ind] != 1 && flagMap[ind] != 3) {
+		return;
+	}
+	for (int p = 0; p < nf; p++) {
+		int bl = nbBlock(ind, p);
+		int loc = nbLocal(ind, p);
+		bool open = bl > -1 && bl < nBlockMax && blocks[bl] && !blocks[bl]->boundary[loc];
+		if (open) {
+			int fm = ((BlockFreeSurface*)blocks[bl])->flagMap[loc];
+			open = fm == 1 || fm == 3;
+		}
+		if (open) {
+			g[nf * ind + opp[p]] = ((BlockFreeSurfaceEulerParticlesLBM*)blocks[bl])->gc[nf * loc + opp[p]];
+		}
+		else {
+			g[nf * ind + opp[p]] = gc[nf * ind + p];
 		}
 	}
 }
@@ -424,9 +496,9 @@ void BlockFreeSurfaceEulerParticlesLBM::cellForce(int ind, double* acc, double& 
 	// smoothed drag is a force density, the exact difference method needs an acceleration
 	double rho = Rho[ind] > 0 ? Rho[ind] : 1.0;
 	epsF = limitFraction(1 - concentration[ind] * volumeParticle);
-	acc[0] = G[0] * epsF + GxSmooth[ind] * vof[ind] / rho;
-	acc[1] = G[1] * epsF + GySmooth[ind] * vof[ind] / rho;
-	acc[2] = G[2] * epsF + GzSmooth[ind] * vof[ind] / rho;
+	acc[0] = fluidGravity * G[0] * epsF + GxSmooth[ind] * vof[ind] / rho;
+	acc[1] = fluidGravity * G[1] * epsF + GySmooth[ind] * vof[ind] / rho;
+	acc[2] = fluidGravity * G[2] * epsF + GzSmooth[ind] * vof[ind] / rho;
 }
 
 void BlockFreeSurfaceEulerParticlesLBM::collision() {

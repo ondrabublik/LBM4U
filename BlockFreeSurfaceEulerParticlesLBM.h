@@ -23,6 +23,9 @@ public:
 
 	double* concentration, * gc, * g;           // number of particles in the cell and its populations
 	double* released;                           // particles of a cell without liquid given to the liquid cells around
+	// refined mesh: change of the sum of the populations of a computed cell balancing the exchange with the finer
+	// level (Mesh::particle*), added in applyExchangeCorr
+	double* exchangeCorr;
 	bool anyReleased = false;
 	double* UP, * VP, * WP;                     // particle velocity
 	double* gUx, * gUy, * gUz, * gVx, * gVy, * gVz, * gWx, * gWy, * gWz;
@@ -53,6 +56,13 @@ public:
 	void calculConcentration();
 	void collisionScalar();
 	void propagationScalar();
+	void propagateScalarCell(int ind);
+	// streaming of the listed cells only (ghost layers of a refined mesh)
+	void propagateScalarCells(const vector<int>& cells);
+	void applyExchangeCorr();
+	// ghost cells: the populations hold numbers of particles, so they are divided (summed) by 8
+	void prolongCell(int ind, const Block* src, int sInd);
+	void restrictCell(int ind, Block* const* src, const int* sInd);
 	// the particles follow the liquid: cells that lost the liquid release their particles (returns true if any),
 	// the liquid cells around collect them in a separate pass
 	bool releaseDryCells();

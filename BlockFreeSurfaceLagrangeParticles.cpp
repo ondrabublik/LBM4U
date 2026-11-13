@@ -56,9 +56,9 @@ void BlockFreeSurfaceLagrangeParticles::cellForce(int ind, double* acc, double& 
 	// particle force is a force density, the exact difference method needs an acceleration
 	double rho = Rho[ind] > 0 ? Rho[ind] : 1.0;
 	epsF = (couplingWayNumber == 4) ? 1 - particleFraction[ind] : 1.0;
-	acc[0] = G[0] * epsF + particleForceX[ind] * vof[ind] / rho;
-	acc[1] = G[1] * epsF + particleForceY[ind] * vof[ind] / rho;
-	acc[2] = G[2] * epsF + particleForceZ[ind] * vof[ind] / rho;
+	acc[0] = fluidGravity * G[0] * epsF + particleForceX[ind] * vof[ind] / rho;
+	acc[1] = fluidGravity * G[1] * epsF + particleForceY[ind] * vof[ind] / rho;
+	acc[2] = fluidGravity * G[2] * epsF + particleForceZ[ind] * vof[ind] / rho;
 }
 
 double BlockFreeSurfaceLagrangeParticles::localTau(int ind) {
@@ -69,15 +69,9 @@ double BlockFreeSurfaceLagrangeParticles::localTau(int ind) {
 	return min(max(tauLoc, tauMin), tauMax);
 }
 
-// the forces of the particles are consumed by the collision (the lists of particles are rebuilt by LagrangeParticles::boxParticles)
+// the forces of the particles act until LagrangeParticles::applyForce replaces them (all steps of a finer level)
 void BlockFreeSurfaceLagrangeParticles::collision() {
 	BlockFreeSurface::collision();
-	for (int i = 0; i < nAll; i++) {
-		int ind = indAll[i];
-		particleForceX[ind] = 0;
-		particleForceY[ind] = 0;
-		particleForceZ[ind] = 0;
-	}
 }
 
 // dp = grad(p) / 2 with p = rho / 3 in the liquid cells (interpolated to the particles for the output)

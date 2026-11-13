@@ -40,6 +40,8 @@ struct CaseSpec {
 	std::function<int(int, int, int, int)> flagL;
 	// initial density and velocity (lattice units of the level 0) of the single phase solver
 	std::function<std::array<double, 4>(int, int, int, int)> initL;
+	// number of particles in a cell of the level (Eulerian particles on a refined mesh)
+	std::function<double(int, int, int, int)> concentrationL;
 };
 
 // leaves of an octree over nBi x nBj x nBk blocks, refine(level, bi, bj, bk) splits a block

@@ -69,30 +69,39 @@ bool LagrangeParticles::locate(double x, double y, double z, Cell& c) const {
 	if (!(std::isfinite(x) && std::isfinite(y) && std::isfinite(z))) {
 		return false;
 	}
-	double fb[3] = { floor(x / ni), floor(y / nj), floor(z / nk) };
-	for (double v : fb) {
-		if (fabs(v) > 1e9) {
+	// refined mesh: the finest computed block holding the point (the coordinates are in the cells of the level 0)
+	int maxL = grid ? grid->maxLevel : 0;
+	for (int L = maxL; L >= 0; L--) {
+		double s = (double)(1 << L);
+		double fb[3] = { floor(x * s / ni), floor(y * s / nj), floor(z * s / nk) };
+		bool big = false;
+		for (double v : fb) {
+			big = big || fabs(v) > 1e9;
+		}
+		if (big) {
 			return false;
 		}
+		int iB = (int)fb[0], jB = (int)fb[1], kB = (int)fb[2];
+		if (grid) {
+			c.bl = grid->find(L, iB, jB, kB); // wraps the periodic directions
+		}
+		else {
+			bool in = iB >= 0 && iB < nBi && jB >= 0 && jB < nBj && kB >= 0 && kB < nBk;
+			c.bl = in ? (nBi * nBj) * kB + nBi * jB + iB : -1;
+		}
+		if (c.bl < 0 || c.bl >= nBlockMax || !blocks[c.bl] || blocks[c.bl]->ghost != GHOST_NONE) {
+			continue;
+		}
+		c.level = L;
+		c.x = x * s - fb[0] * ni;
+		c.y = y * s - fb[1] * nj;
+		c.z = z * s - fb[2] * nk;
+		c.i = min(max((int)c.x, 0), ni - 1);
+		c.j = min(max((int)c.y, 0), nj - 1);
+		c.k = min(max((int)c.z, 0), nk - 1);
+		return true;
 	}
-	int iB = (int)fb[0], jB = (int)fb[1], kB = (int)fb[2];
-	if (grid) {
-		c.bl = grid->find(0, iB, jB, kB); // wraps the periodic directions
-	}
-	else {
-		bool in = iB >= 0 && iB < nBi && jB >= 0 && jB < nBj && kB >= 0 && kB < nBk;
-		c.bl = in ? (nBi * nBj) * kB + nBi * jB + iB : -1;
-	}
-	if (c.bl < 0 || c.bl >= nBlockMax || !blocks[c.bl]) {
-		return false;
-	}
-	c.x = x - fb[0] * ni;
-	c.y = y - fb[1] * nj;
-	c.z = z - fb[2] * nk;
-	c.i = min(max((int)c.x, 0), ni - 1);
-	c.j = min(max((int)c.y, 0), nj - 1);
-	c.k = min(max((int)c.z, 0), nk - 1);
-	return true;
+	return false;
 }
 
 template <class F> void LagrangeParticles::liquidCells(const Cell& c, F fn) {
@@ -125,7 +134,8 @@ template <class F> void LagrangeParticles::liquidCells(const Cell& c, F fn) {
 					}
 				}
 				LagBlock* b = (LagBlock*)blocks[bl];
-				if (!b->boundary[ind] && (b->flagMap[ind] == 1 || b->flagMap[ind] == 3)) {
+				// ghost blocks (copies of another level near a level interface) are not used
+				if (b->ghost == GHOST_NONE && !b->boundary[ind] && (b->flagMap[ind] == 1 || b->flagMap[ind] == 3)) {
 					fn(b, ind, weight);
 				}
 			}
@@ -326,13 +336,27 @@ double LagrangeParticles::wallDistance(int p, double xin, double yin, double zin
 	partWallNormalX[p] = nx;
 	partWallNormalY[p] = ny;
 	partWallNormalZ[p] = nz;
-	return max(L, 0.0);
+	return max(L, 0.0) / (1 << c.level); // in the cells of the level 0
 }
 
 // Spreads the impulse of the particles to the liquid cells around. The cell gets weight / sum(weight * vof)
 // of it and uses it as force * vof / rho (cellForce), so the whole impulse reaches the fluid also next to
-// the walls and to the free surface.
+// the walls and to the free surface. The force acts in all steps of the level until the next call: a block of
+// the level L makes 2^L steps per particle step, its momentum unit is 8^-L of the level 0 one, so it gets the
+// impulse * 8^L / 2^L = 4^L per step.
 void LagrangeParticles::applyForce() {
+#pragma omp parallel for schedule(dynamic)
+	for (int s = 0; s < nBlockMax; s++) {
+		if (!blocks[s] || blocks[s]->ghost != GHOST_NONE) {
+			continue;
+		}
+		LagBlock* b = (LagBlock*)blocks[s];
+		for (int ind = 0; ind < b->ntot; ind++) {
+			b->particleForceX[ind] = 0;
+			b->particleForceY[ind] = 0;
+			b->particleForceZ[ind] = 0;
+		}
+	}
 	for (int p = 0; p < nParticles; p++) {
 		double Fx = Gx[p];
 		double Fy = Gy[p];
@@ -351,7 +375,7 @@ void LagrangeParticles::applyForce() {
 		if (sum <= 0) {
 			continue;
 		}
-		sum = max(sum, BlockFreeSurface::FORCE_KERNEL_MIN);
+		sum = max(sum, BlockFreeSurface::FORCE_KERNEL_MIN) / (double)(1 << (2 * c.level));
 		liquidCells(c, [&](LagBlock* b, int ind, double weight) {
 			b->particleForceX[ind] += weight / sum * Fx;
 			b->particleForceY[ind] += weight / sum * Fy;
@@ -409,9 +433,11 @@ void LagrangeParticles::particleParticleInteraction() {
 			continue;
 		}
 		int ind = (ni * nj) * c.k + ni * c.j + c.i;
-		for (int i = -1; i <= 1; i++) {
-			for (int j = -1; j <= 1; j++) {
-				for (int k = -1; k <= 1; k++) {
+		// the cells of the level have to cover the range 1.5 d of the force
+		int r = max(1, (int)ceil(1.5 * dMax * (1 << c.level)));
+		for (int i = -r; i <= r; i++) {
+			for (int j = -r; j <= r; j++) {
+				for (int k = -r; k <= r; k++) {
 					int bl, loc;
 					blocks[c.bl]->local2globalShift(c.bl, ind, bl, loc, i, j, k);
 					if (bl < 0 || bl >= nBlockMax || !blocks[bl]) {
@@ -527,6 +553,7 @@ void LagrangeParticles::readInitParticlesDistribution(string simulPath, double C
 		partCrossection[i] = PI / 4 * partD[i] * partD[i];
 		partVolume[i] = PI / 6 * partD[i] * partD[i] * partD[i];
 		partMass[i] = partVolume[i] * partRho[i];
+		dMax = max(dMax, partD[i]);
 	}
 	cout << nParticles << " Lagrangian particles were readed!" << endl;
 }

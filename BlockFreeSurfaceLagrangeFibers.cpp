@@ -54,9 +54,9 @@ void BlockFreeSurfaceLagrangeFibers::cellForce(int ind, double* acc, double& eps
 	// fiber force is a force density, the exact difference method needs an acceleration
 	double rho = Rho[ind] > 0 ? Rho[ind] : 1.0;
 	epsF = (couplingWayNumber == 4) ? 1 - particleFraction[ind] : 1.0;
-	acc[0] = G[0] * epsF + particleForceX[ind] * vof[ind] / rho;
-	acc[1] = G[1] * epsF + particleForceY[ind] * vof[ind] / rho;
-	acc[2] = G[2] * epsF + particleForceZ[ind] * vof[ind] / rho;
+	acc[0] = fluidGravity * G[0] * epsF + particleForceX[ind] * vof[ind] / rho;
+	acc[1] = fluidGravity * G[1] * epsF + particleForceY[ind] * vof[ind] / rho;
+	acc[2] = fluidGravity * G[2] * epsF + particleForceZ[ind] * vof[ind] / rho;
 }
 
 double BlockFreeSurfaceLagrangeFibers::localTau(int ind) {

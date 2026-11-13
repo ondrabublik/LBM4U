@@ -679,3 +679,117 @@ TEST(euler_particles_follow_free_surface) {
 	CHECK_LT(fabs(lossFvm), 1e-10);
 	CHECK_LT(fabs(lossLbm), 1e-4); // the scalar LBM conserves the populations, the concentration follows them
 }
+
+// ---------------------------------------------------------------------------------------------
+// particles on a refined mesh: box 16^3 (2 x 2 x 2 blocks of the level 0), the half x < 8 is refined
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+	CaseSpec refinedBox(const string& name, int problemID, double nu) {
+		CaseSpec s;
+		s.name = name;
+		s.ni = s.nj = s.nk = 8;
+		s.octree = octreeBlocks(2, 2, 2, 1, [](int l, int i, int, int) { return l == 0 && i == 0; });
+		s.params = latticeParams(problemID, 8, nu);
+		s.params["maxParticlesInCell"] = "20";
+		s.flagL = [](int, int, int, int) { return 1; };
+		return s;
+	}
+
+	// number of the Eulerian particles in the computed cells (FVM: concentration, LBM: sum of the populations / theta)
+	template <class B> array<double, 2> particleCount(Mesh& mesh, bool populations) {
+		array<double, 2> n = { 0, 0 }; // total, finer level
+		for (int b = 0; b < mesh.nBlock; b++) {
+			B* bl = (B*)mesh.blocks[mesh.blockId[b]];
+			for (int ind = 0; ind < bl->nAll; ind++) {
+				if (bl->boundary[ind]) {
+					continue;
+				}
+				double c = 0;
+				if (populations) {
+					for (int p = 0; p < bl->nf; p++) {
+						c += ((BlockFreeSurfaceEulerParticlesLBM*)bl)->gc[bl->nf * ind + p];
+					}
+				}
+				else {
+					c = ((BlockFreeSurfaceEulerParticlesFVM*)bl)->concentration[ind];
+				}
+				n[0] += c;
+				if (bl->level > 0) {
+					n[1] += c;
+				}
+			}
+		}
+		return n;
+	}
+
+	template <class B> void refinedConservation(int problemID) {
+		CaseSpec s = refinedBox(problemID == 3 ? "ref_fvm" : "ref_lbm", problemID, 0.02);
+		s.params["gx"] = "-1e-4"; // the particles settle from the coarser half into the finer one
+		setEulerParticles(s, 1.0, 20, 0.005);
+		s.concentrationL = [](int l, int i, int j, int k) {
+			return (l == 0 && i >= 9 && i < 15 && j >= 4 && j < 12 && k >= 4 && k < 12) ? 0.05 : 0.0;
+		};
+		auto mesh = buildMesh(s);
+		bool pop = problemID == 4;
+		array<double, 2> n0 = particleCount<B>(*mesh, pop);
+		double worst = 0;
+		for (int n = 0; n < 5; n++) {
+			runSteps(*mesh, 100, 100 * n);
+			array<double, 2> c = particleCount<B>(*mesh, pop);
+			worst = max(worst, fabs(c[0] - n0[0]) / n0[0]);
+		}
+		array<double, 2> c = particleCount<B>(*mesh, pop);
+		report(string(problemID == 3 ? "FVM" : "LBM") + ": relative change of the number of particles", worst);
+		report(string(problemID == 3 ? "FVM" : "LBM") + ": part of the particles in the finer half", c[1] / c[0]);
+		CHECK(mesh->getUmax() == mesh->getUmax());
+		CHECK(c[1] / c[0] > 0.2); // the particles crossed the level interface
+		CHECK_LT(worst, 1e-11);
+	}
+}
+
+TEST(refinement_euler_particles_conservation) {
+	refinedConservation<FvmBlock>(3);
+	refinedConservation<LbmBlock>(4);
+}
+
+// the impulse of the particles reaches the fluid in both levels in the right units
+TEST(refinement_lagrange_force_and_settling) {
+	const double d = 0.5, rhoP = 20, g = 1e-4, nu = 0.02;
+	CaseSpec s = refinedBox("ref_lag", 2, nu);
+	s.params["gz"] = to_string(-g);
+	s.params["initializeWithHydroPress"] = "1";
+	s.particles.push_back({ 4.3, 7.6, 12.4, d, rhoP });   // finer half
+	s.particles.push_back({ 12.3, 7.6, 12.4, d, rhoP });  // coarser half
+	auto mesh = buildMesh(s);
+	LagrangeParticles& P = *mesh->particles;
+	runSteps(*mesh, 600);
+	double vt = terminalVelocity(d, rhoP, g, nu);
+	for (int p = 0; p < 2; p++) {
+		double slip = P.veloFZ[p] - P.veloZ[p];
+		report(string(p == 0 ? "finer" : "coarser") + " half: slip / vt", slip / vt);
+		report(string(p == 0 ? "finer" : "coarser") + " half: fluid velocity at the particle / vt", P.veloFZ[p] / vt);
+		CHECK_NEAR(slip, vt, 0.02 * vt);
+		CHECK(P.veloFZ[p] < 0 && P.veloFZ[p] > -0.5 * vt); // the fluid is dragged down, but not more than in a uniform mesh
+	}
+	// momentum given to the fluid during one step of the level 0 (sum over the levels in the units of the level 0)
+	P.applyForce();
+	double fz = 0;
+	for (int b = 0; b < mesh->nBlock; b++) {
+		LagBlock* bl = (LagBlock*)mesh->blocks[mesh->blockId[b]];
+		double scale = (double)(1 << bl->level) / (1 << (3 * bl->level)); // 2^L steps, momentum unit 8^-L
+		for (int ind = 0; ind < bl->nAll; ind++) {
+			fz += bl->particleForceZ[ind] * bl->vof[ind] * scale;
+		}
+	}
+	report("momentum given to the fluid / impulse of the particles", fz / (P.Gz[0] + P.Gz[1]));
+	CHECK_NEAR(fz, P.Gz[0] + P.Gz[1], 1e-10 * fabs(P.Gz[0] + P.Gz[1]));
+	// wall distance across the level interface: the exact distance is 7.7, the interpolated cell centred distance is
+	// about half a cell shorter (7.23 on a uniform mesh of the level 0), more accurate on the finer side
+	double La = P.wallDistance(0, 7.95, 8.3, 8.3), Lb = P.wallDistance(0, 8.05, 8.3, 8.3);
+	report("wall distance on the finer side of the interface (exact 7.7)", La);
+	report("wall distance on the coarser side of the interface (exact 7.7)", Lb);
+	CHECK_NEAR(La, 7.7, 0.6);
+	CHECK_NEAR(Lb, 7.7, 0.6);
+	CHECK_NEAR(La, Lb, 0.5);
+}

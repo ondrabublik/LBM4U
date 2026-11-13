@@ -110,6 +110,7 @@ void Block::initCommon(bool isFirst, Block** blocks, int nBlock, int nBlockMax, 
 		getParDouble("gx", par, false, 0) / Cf, getParDouble("gy", par, false, 0) / Cf, getParDouble("gz", par, false, 0) / Cf
 	};
 	G0 = new double[3]{ G[0], G[1], G[2] };
+	fluidGravity = getParDouble("fluidGravity", par, false, 1);
 	velWall[0] = getParDouble("uwall", par, false, 0) / Cu;
 	velWall[1] = getParDouble("vwall", par, false, 0) / Cu;
 	velWall[2] = getParDouble("wwall", par, false, 0) / Cu;

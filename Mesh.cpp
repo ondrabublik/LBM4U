@@ -129,11 +129,11 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 	case 2:
 		particles = new LagrangeParticles(blocks, nBlock, nBlockMax, nBi, nBj, nBk, ni, nj, nk, par);
 		particles->grid = &grid;
-		particles->readInitParticlesDistribution(simulPath, b0->Ch, b0->Cu);
+		particles->readInitParticlesDistribution(simulPath, b0->Ch * (1 << b0->level), b0->Cu); // cells of the level 0
 		break;
 	case 21:
 		fibers = new LagrangeFibers(blocks, nBlock, nBlockMax, nBi, nBj, nBk, ni, nj, nk, par);
-		fibers->readInitFibersDistribution(simulPath, b0->Ch, b0->Cu);
+		fibers->readInitFibersDistribution(simulPath, b0->Ch * (1 << b0->level), b0->Cu);
 		break;
 	}
 	if ((problemID == 2 || problemID == 4) && gravityRotationOmega != 0) {
@@ -494,10 +494,16 @@ void Mesh::evalBlocks(int iter, int step) {
 void Mesh::advanceLevel(int level, int iterLevel) {
 	if (level < maxLevel) {
 		computeLost(level);
+		if (problemID == 4) {
+			scalarLost(level);
+		}
 		explodeToGhosts(level + 1);
 		advanceLevel(level + 1, 2 * iterLevel);
 		advanceLevel(level + 1, 2 * iterLevel + 1);
 		coalesceToGhosts(level, true);
+		if (problemID == 4) {
+			scalarCoalesce(level);
+		}
 	}
 	if (level > 0) {
 		refreshGhosts(level);
@@ -527,10 +533,172 @@ void Mesh::advanceLevel(int level, int iterLevel) {
 		}
 		break;
 	case 1:
+	case 2:
+	case 3:
+	case 4:
 		advanceFreeSurfaceLevel(level, iterLevel);
 		break;
 	}
 	curLevel = -1;
+}
+
+void Mesh::eulerLevelStep(int level, int iterLevel) {
+	typedef BlockFreeSurfaceEulerParticlesFVM FVM;
+	typedef BlockFreeSurfaceEulerParticlesLBM LBM;
+	if (problemID == 3) {
+		evalBlocks(iterLevel, 30); // particles of emptied cells, gradP, fluid velocity
+		evalBlocks(iterLevel, 31); // particle velocity, force
+		forBlocks([](Block* b) {
+			FVM* e = (FVM*)b;
+			e->smoothForce();
+			e->computeFlux();
+		});
+		if (level > 0) {
+			forwardFluxFVM(level);
+		}
+		forBlocks([](Block* b) { ((FVM*)b)->applyFlux(); });
+	}
+	else if (problemID == 4) {
+		evalBlocks(iterLevel, 40); // particles of emptied cells, velocity gradient, fluid velocity
+		evalBlocks(iterLevel, 41); // particle velocity, force
+		evalBlocks(iterLevel, 42); // smoothing of the force, propagation of the scalar
+		if (level > 0) {
+			forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) { ((LBM*)blocks[g.slot])->propagateScalarCells(g.near2); });
+			scalarAccount(level);
+		}
+		forBlocks([](Block* b) { ((LBM*)b)->applyExchangeCorr(); }, false);
+		evalBlocks(iterLevel, 43); // concentration
+		evalBlocks(iterLevel, 45); // collision of the scalar
+		if (level > 0) {
+			// the coarser populations stream through the ghost layer during the two fine steps without collision
+			forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
+				LBM* b = (LBM*)blocks[g.slot];
+				for (int ind : g.near2) {
+					for (int p = 0; p < nf; p++) {
+						b->gc[nf * ind + p] = b->g[nf * ind + p];
+					}
+				}
+			});
+		}
+	}
+}
+
+void Mesh::forwardFluxFVM(int level) {
+	typedef BlockFreeSurfaceEulerParticlesFVM FVM;
+	forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
+		FVM* b = (FVM*)blocks[g.slot];
+		for (int ind : g.near1) {
+			double n = b->exchangeCorr[ind];
+			if (n == 0) {
+				continue;
+			}
+			b->exchangeCorr[ind] = 0;
+			double* acc = &((FVM*)blocks[g.srcBlock[ind]])->exchangeCorr[g.srcLocal[ind]];
+#pragma omp atomic
+			*acc += n;
+		}
+	}, true);
+}
+
+namespace {
+	inline bool liquidCell(Block* b, int ind) {
+		BlockFreeSurface* f = (BlockFreeSurface*)b;
+		return !b->boundary[ind] && (f->flagMap[ind] == 1 || f->flagMap[ind] == 3);
+	}
+}
+
+// scalar populations of the computed cells of the level streaming towards the finer level
+void Mesh::scalarLost(int level) {
+	typedef BlockFreeSurfaceEulerParticlesLBM LBM;
+	int saved = curLevel;
+	curLevel = level;
+	forBlocks([this](Block* b) {
+		LBM* e = (LBM*)b;
+		for (int i = 0; i < b->nBound; i++) {
+			int ind = b->indBound[i];
+			if (!liquidCell(b, ind)) {
+				continue;
+			}
+			for (int p = 1; p < nf; p++) {
+				int bl = b->nbBlock(ind, p);
+				int loc = b->nbLocal(ind, p);
+				if (bl >= 0 && blocks[bl]->ghost == GHOST_FROM_FINER && liquidCell(blocks[bl], loc)) {
+					e->exchangeCorr[ind] += e->gc[nf * ind + p];
+				}
+			}
+		}
+	}, false);
+	curLevel = saved;
+}
+
+// scalar populations entering the computed cells of the level from the finer one: the sum of the populations that
+// streamed into the 8 finer cells covering the destination cell (the populations hold numbers of particles)
+void Mesh::scalarCoalesce(int level) {
+	typedef BlockFreeSurfaceEulerParticlesLBM LBM;
+	forGhosts(level, GHOST_FROM_FINER, [this, level](GhostBlock& g) {
+		LBM* b = (LBM*)blocks[g.slot];
+		for (int ind : g.near1) {
+			if (!liquidCell(b, ind)) {
+				continue;
+			}
+			for (int dir = 1; dir < nf; dir++) {
+				int bl = b->nbBlock(ind, dir);
+				int loc = b->nbLocal(ind, dir);
+				if (bl < 0 || blocks[bl]->ghost != GHOST_NONE || !liquidCell(blocks[bl], loc)) {
+					continue;
+				}
+				LBM* dest = (LBM*)blocks[bl];
+				int gi, gj, gk;
+				dest->globalCoords(loc, gi, gj, gk);
+				double sum = 0;
+				int count = 0;
+				for (int o = 0; o < 8; o++) {
+					int fl;
+					Block* fb = cellAtLevel(level + 1, 2 * gi + (o & 1), 2 * gj + ((o >> 1) & 1), 2 * gk + (o >> 2), fl);
+					if (fb && liquidCell(fb, fl)) {
+						sum += ((LBM*)fb)->g[nf * fl + dir];
+						count++;
+					}
+				}
+				if (count == 0) {
+					continue;
+				}
+				b->gc[nf * ind + dir] = sum;
+				double* mc = &dest->exchangeCorr[loc];
+#pragma omp atomic
+				*mc -= sum; // received by the coarser level
+			}
+		}
+	});
+}
+
+// scalar populations exchanged by the computed cells of the level and its ghosts from the coarser level in the last
+// propagation, the balance goes to the coarser cell covering the ghost cell
+void Mesh::scalarAccount(int level) {
+	typedef BlockFreeSurfaceEulerParticlesLBM LBM;
+	forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
+		LBM* b = (LBM*)blocks[g.slot];
+		for (int ind : g.near1) {
+			if (!liquidCell(b, ind)) {
+				continue;
+			}
+			double d = 0;
+			for (int i = 1; i < nf; i++) {
+				int bl = b->nbBlock(ind, i);
+				int loc = b->nbLocal(ind, i);
+				if (bl < 0 || blocks[bl]->ghost != GHOST_NONE || !liquidCell(blocks[bl], loc)) {
+					continue;
+				}
+				d -= b->gc[nf * ind + i];      // received by the computed cell
+				d += b->g[nf * ind + opp[i]];  // sent by the computed cell
+			}
+			if (d != 0) {
+				double* mc = &((LBM*)blocks[g.srcBlock[ind]])->exchangeCorr[g.srcLocal[ind]];
+#pragma omp atomic
+				*mc += d;
+			}
+		}
+	});
 }
 
 // one free surface step of the level (Mesh::timeStep, case 1), the ghosts take part in the local operations
@@ -579,6 +747,9 @@ void Mesh::advanceFreeSurfaceLevel(int level, int iterLevel) {
 		accountInterface(level);
 	}
 	applyMassCorr(level);
+	if (problemID == 3 || problemID == 4) {
+		eulerLevelStep(level, iterLevel);
+	}
 
 	// macro, collision, new free surface geometry (also of the ghost cells, the requests go to their level)
 	forBlocks([](Block* b) { b->makro(); });
@@ -613,6 +784,10 @@ void Mesh::advanceFreeSurfaceLevel(int level, int iterLevel) {
 // one time step of the selected problem
 void Mesh::timeStep(int iter) {
 	if (maxLevel > 0) {
+		if (problemID == 2) {
+			// one step of the particles per step of the level 0, their force acts in all steps of the finer levels
+			evalBlocks(iter, 20);
+		}
 		advanceLevel(0, iter);
 		return;
 	}
@@ -865,8 +1040,8 @@ int Mesh::loadStructure(string geomPath) {
 		if (ni % 2 || nj % 2 || nk % 2) {
 			throw invalid_argument("grid refinement requires even block dimensions ni, nj, nk");
 		}
-		if (problemID != 0 && problemID != 1) {
-			throw invalid_argument("grid refinement is available for problemID 0 and 1 only");
+		if (problemID != 0 && problemID != 1 && problemID != 2 && problemID != 3 && problemID != 4) {
+			throw invalid_argument("grid refinement is available for problemID 0, 1, 2, 3 and 4 only");
 		}
 	}
 	if (nk == 1 && nBk == 1) {
@@ -2065,6 +2240,8 @@ void Mesh::generateDistanceFunction() {
 		}
 	}
 
+	ghostWallDistance();
+
 	// gradient of distance function
 	forBlocks([this](Block* bl) {
 		double wallDist[27];
@@ -2126,6 +2303,37 @@ void Mesh::generateDistanceFunction() {
 	}, false);
 
 	cout << " done" << endl;
+}
+
+// wall distance in the cells of the ghost level: twice the coarser distance, half of the mean of the 8 finer ones
+void Mesh::ghostWallDistance() {
+	for (int l = 0; l <= maxLevel; l++) {
+		forGhosts(l, 0, [this](GhostBlock& g) {
+			Block* b = blocks[g.slot];
+			for (int ind = 0; ind < b->nAll; ind++) {
+				if (b->boundary[ind]) {
+					b->wallDistance[ind] = -0.5;
+					continue;
+				}
+				if (g.source == GHOST_FROM_COARSER) {
+					Block* s = blocks[g.srcBlock[ind]];
+					b->wallDistance[ind] = 2 * max(s->wallDistance[g.srcLocal[ind]], 0.0);
+				}
+				else {
+					double d = 0;
+					int n = 0;
+					for (int o = 0; o < 8; o++) {
+						int sb = g.srcBlock[8 * ind + o];
+						if (sb >= 0 && !blocks[sb]->boundary[g.srcLocal[8 * ind + o]]) {
+							d += blocks[sb]->wallDistance[g.srcLocal[8 * ind + o]];
+							n++;
+						}
+					}
+					b->wallDistance[ind] = n ? d / n / 2 : 0.0;
+				}
+			}
+		}, true);
+	}
 }
 
 // hydrostatic density profile below the highest fluid cell (in the direction of gravity)

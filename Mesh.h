@@ -182,6 +182,16 @@ private:
 	void accountInterface(int level);
 	void applyMassCorr(int level);
 	void advanceLevel(int level, int iterLevel);
+	// Eulerian particles of the level (refined mesh), between the propagation and the collision
+	void eulerLevelStep(int level, int iterLevel);
+	// FVM: particles sent by the computed cells of the level into the ghosts from the coarser level go to the coarser cells
+	void forwardFluxFVM(int level);
+	// LBM: balance of the scalar populations exchanged with the finer level (as computeLost, coalesceToGhosts, accountInterface)
+	void scalarLost(int level);
+	void scalarCoalesce(int level);
+	void scalarAccount(int level);
+	// wall distance of the ghost cells from the level holding them
+	void ghostWallDistance();
 	string outputName(const string& prefix, int iter, const string& ext);
 	void writePvd(const string& fileName, const vector<pair<double, string> >& files);
 };

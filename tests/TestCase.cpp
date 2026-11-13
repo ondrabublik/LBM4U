@@ -97,6 +97,14 @@ unique_ptr<Mesh> buildMesh(const CaseSpec& spec) {
 							f << "\n";
 						}
 			}
+			if (spec.concentrationL) {
+				ofstream f(sim + "init/concentration" + tag + ".txt");
+				f.precision(17);
+				for (int i = 0; i < spec.ni; i++)
+					for (int j = 0; j < spec.nj; j++)
+						for (int k = 0; k < spec.nk; k++)
+							f << spec.concentrationL(l, g0 + i, g1 + j, g2 + k) << "\n";
+			}
 		}
 	}
 	for (int bk = 0; bk < spec.nBk && spec.octree.empty(); bk++) {

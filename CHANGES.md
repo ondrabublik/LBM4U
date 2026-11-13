@@ -9,7 +9,7 @@ build.bat            # Visual Studio 2022 (MSVC, OpenMP /openmp:llvm)
 build.bat mingw      # MSYS2 g++ + Ninja, statically linked exe
 ```
 
-CMake builds `cLBMnet.exe` (the solver) and `lbm_tests.exe` (51 unit tests, run them in the build folder, optionally with a name filter).
+CMake builds `cLBMnet.exe` (the solver) and `lbm_tests.exe` (53 unit tests, run them in the build folder, optionally with a name filter).
 
 Graphical interface: `gui/build_gui.bat` → `gui/bin/LBMStudio.exe`, described in [gui/README.md](gui/README.md).
 
@@ -89,7 +89,7 @@ Static refinement driven by the geometry: the mesh is created once during genera
 * Mass is conserved exactly (machine precision). The difference between what the coarse level hands over and what the fine level takes (and vice versa) is returned to the coarse cell (`massCorr`). The difference arises mainly where the level interface crosses a wall.
 * Rescaling of the non-equilibrium part of the populations (Dupuis–Chopard) was tried and removed. In the volumetric scheme it breaks momentum conservation per population and gave an error of +21 % / −11 % in the Poiseuille test.
 * Free surface across the interface: the mass exchange between interface cells of different levels is computed by the fine side and the coarse cell receives the opposite value (`massAcc`). Cell conversions (gas → interface, liquid → interface) on ghost cells are done immediately and sent to the level that owns the cell. The same applies to mass redistributed into ghost cells. A link between a liquid cell and a gas ghost cell (the conversion arrives one step later) does not transfer mass. Ghost blocks compute local quantities (interface types, levels, VOF smoothing, normals, curvature). Empty blocks are activated across ghost blocks too.
-* Limitations: only `problemID` 0 and 1, not D2Q9, even `ni, nj, nk`. Where the level interface crosses a wall perpendicular to the flow, a Poiseuille channel 32 coarse cells high has a flow rate error of 1–3.5 % (a parallel interface ~1e-3). The error is in the corners of the interface and the wall, not in the mass.
+* Limitations: `problemID` 0, 1, 2, 3 and 4 (not the fibers 21), not D2Q9, even `ni, nj, nk`. Where the level interface crosses a wall perpendicular to the flow, a Poiseuille channel 32 coarse cells high has a flow rate error of 1–3.5 % (a parallel interface ~1e-3). The error is in the corners of the interface and the wall, not in the mass.
 * Output: VTK contains the blocks of all levels in the cell coordinates of level 0, `fields_<iter>.bin` of a refined mesh has version 2 with the block level, MLUPS counts the `2^L` steps of the fine levels.
 * Tests: `refinement_*` (fluid at rest, rejection of an unbalanced mesh, mass conservation, Poiseuille flow with the interface parallel and perpendicular to the flow, free surface – dam break across the interface and a free surface at rest).
 
@@ -141,10 +141,17 @@ Known properties and limits:
 * The force of the particles enters the fluid as `F·vof/ρ` (interface cells get less).
 * Lagrangian fibers (`problemID` 21) and the files `LagrangeParticlesVar2/3` (not built) were not reviewed.
 
+### Particles on a refined mesh
+
+* Lagrangian particles (`problemID` 2): one particle step per step of the level 0 (before the finer levels), the particle is coupled with the finest computed block holding it (`LagrangeParticles::locate`), interpolation and force spreading use the cells of that level only (ghost cells are skipped, the kernel is renormalised). The impulse of a particle step acts in all 2^L steps of the level L as the force `J · 4^L` per step (momentum unit 8^-L, 2^L steps), the forces are kept until the next `applyForce` instead of being cleared in the collision. The wall distance of the ghost cells is taken from their level (`Mesh::ghostWallDistance`), the wall distance of a particle is in the cells of the level 0. Particle positions are read with the cell size of the level 0 (they were scaled with the first block, which can be a finer one).
+* Eulerian particles (`problemID` 3, 4): the particle step runs on every level between its propagation and collision (`Mesh::eulerLevelStep`). The concentration is the number of particles in the cell of the level, ghost cells get 1/8 of the coarser cell or the sum of the 8 finer cells. FVM: the flux through a face between the levels is computed by the finer cells, the coarser cell receives the same number of particles (`exchangeCorr`, `Mesh::forwardFluxFVM`). LBM: the scalar populations are exchanged like the fluid populations (explosion with 1/8, coalescence as the sum of the 8 finer populations) and balanced as in `computeLost`/`accountInterface` (`Mesh::scalarLost`, `scalarCoalesce`, `scalarAccount`). The number of particles is conserved to 1e-14 (FVM) and 1e-13 (LBM) when a cloud crosses the level interface.
+* The force smoothing and interpolation kernels of all models skip ghost blocks, so the force of the particles is conserved on every level.
+* New parameter `fluidGravity` (default 1): 0 applies the gravity only to the particles (a closed box full of liquid, where the hydrostatic pressure does not influence the flow but would vary the lattice density by 3 g L / Cu²).
+* Tests: `refinement_euler_particles_conservation`, `refinement_lagrange_force_and_settling`.
 ## Not done
 
 * AA-pattern (a single population array) and SoA layout.
-* Refinement for particles and fibers (`problemID` 2, 21, 3, 4).
+* Refinement for the fibers (`problemID` 21).
 
 ## Format of `fields_<iter>.bin`
 

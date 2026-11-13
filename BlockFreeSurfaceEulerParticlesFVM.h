@@ -23,6 +23,9 @@ public:
 
 	double* concentration, * fluxConcentration; // number of particles in the cell
 	double* released;                           // particles of a cell without liquid given to the liquid cells around
+	// refined mesh: computed blocks - particles coming from the finer level (added in applyFlux),
+	// ghost blocks of a coarser level - particles the computed cells sent into the ghost cell (Mesh moves them)
+	double* exchangeCorr;
 	bool anyReleased = false;
 	double* UP, * VP, * WP;                     // particle velocity
 	double* PP;
@@ -58,6 +61,9 @@ public:
 	bool releaseDryCells();
 	void collectReleased();
 	void computeParticlePressure();
+	// ghost cells: the concentration is the number of particles in the cell, so it is divided (summed) by 8
+	void prolongCell(int ind, const Block* src, int sInd);
+	void restrictCell(int ind, Block* const* src, const int* sInd);
 	void computeParticlePressureGradient();
 
 private:
