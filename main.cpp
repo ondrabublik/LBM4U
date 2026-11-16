@@ -136,7 +136,7 @@ static int run(int argc, char** argv) {
 				cout << " (active blocks " << (double)mesh->activeBlockCellUpdates() * iters / elapsed / 1e6 << " Mcells/s)";
 			}
 			cout << endl;
-			if (problemID == 2) {
+			if (problemID == 2 || problemID == 22) {
 				mesh->particles->getParticlesInfo();
 			}
 			outfile << iter << " " << uMax;

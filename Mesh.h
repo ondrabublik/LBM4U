@@ -22,10 +22,12 @@
 #include "BlockBasic.h"
 #include "BlockFreeSurface.h"
 #include "BlockFreeSurfaceLagrangeParticles.h"
+#include "BlockFreeSurfaceLagrangeNoSphereParticles.h"
 #include "BlockFreeSurfaceLagrangeFibers.h"
 #include "BlockFreeSurfaceEulerParticlesFVM.h"
 #include "BlockFreeSurfaceEulerParticlesLBM.h"
 #include "LagrangeParticles.h"
+#include "LagrangeNoSphereParticles.h"
 #include "LagrangeFibers.h"
 
 using namespace std;
@@ -94,6 +96,8 @@ public:
 	~Mesh();
 
 	bool isFreeSurface() const;
+	// Lagrangian particles: spheres (problemID 2) or ellipsoids (22)
+	bool isLagrangeParticles() const { return problemID == 2 || problemID == 22; }
 	void model(int model, int** ex, int** ey, int** ez, double** w, int** opp);
 	int loadStructure(string geomPath);
 	void initIndexes();

@@ -9,7 +9,7 @@ build.bat            # Visual Studio 2022 (MSVC, OpenMP /openmp:llvm)
 build.bat mingw      # MSYS2 g++ + Ninja, statically linked exe
 ```
 
-CMake builds `cLBMnet.exe` (the solver) and `lbm_tests.exe` (53 unit tests, run them in the build folder, optionally with a name filter).
+CMake builds `cLBMnet.exe` (the solver) and `lbm_tests.exe` (59 unit tests, run them in the build folder, optionally with a name filter).
 
 Graphical interface: `gui/build_gui.bat` → `gui/bin/LBMStudio.exe`, described in [gui/README.md](gui/README.md).
 
@@ -148,6 +148,19 @@ Known properties and limits:
 * The force smoothing and interpolation kernels of all models skip ghost blocks, so the force of the particles is conserved on every level.
 * New parameter `fluidGravity` (default 1): 0 applies the gravity only to the particles (a closed box full of liquid, where the hydrostatic pressure does not influence the flow but would vary the lattice density by 3 g L / Cu²).
 * Tests: `refinement_euler_particles_conservation`, `refinement_lagrange_force_and_settling`.
+### Non-spherical particles (`problemID` 22)
+
+Rigid ellipsoids as Lagrangian point particles (`LagrangeNoSphereParticles`, block `BlockFreeSurfaceLagrangeNoSphereParticles`). Everything except the equations of motion is inherited from `problemID` 2: interpolation, force spreading, walls, cell lists, free surface, refined meshes.
+
+* Input `init/particles.txt`: number of particles, then `x y z a1 a2 a3 density qw qx qy qz [f1 f2 f3]` (SI units). `a1..a3` are the semi-axes along the body axes, the quaternion rotates the body axes to the lab frame (it is normalised), `f1..f3` are optional factors of the drag along the body axes (default 1).
+* Translation: drag tensor `K = R diag(k1, k2, k3) Rᵀ` with the exact Stokes resistance of the ellipsoid `k_i = f_i μ 16π a1a2a3 / (χ0 + a_i² α_i)` (Oberbeck; the elliptic integrals by Carlson's `R_F`, `R_D`) and the Schiller–Naumann correction with the volume-equivalent diameter. The velocity is updated implicitly (3 × 3 system), the reaction `K (v − u)` goes to the liquid as for the spheres (momentum conserved). A sphere gives exactly the result of `problemID` 2.
+* Rotation: Euler equations of the rigid body in the body frame with the creeping-flow torque of Jeffery (1922), `T_i = μ KR_i (Ω_i + λ_i E_jk − ω_i)`, `λ_i = (a_j² − a_k²)/(a_j² + a_k²)`, implicit in the torque, so small particles follow the Jeffery orbits. The orientation is a quaternion advanced with the exact rotation of each step. The velocity gradient of the liquid is computed in every liquid cell (`gradU`, mirror value `2 u_wall − u` behind walls, zero normal gradient at the free surface) and interpolated to the particle with the same kernel as the velocity.
+* Walls: the contact distance is the support function of the ellipsoid along the wall normal, `sqrt(nᵀ R diag(a²) Rᵀ n)`. Particle–particle repulsion uses the volume-equivalent diameter.
+* Output `output_particles*.vtk`: in addition `TENSORS shape` (`R diag(a) Rᵀ`, for the Tensor Glyph filter of ParaView), `axis1..3` and `angularVelocity` [rad/s].
+* Not modelled: inertial (finite Re) torque and lift, the torque of the particle on the liquid (only the force is coupled), contact torques at walls. The point-particle limits of `problemID` 2 hold, the largest semi-axis should be below the cell size.
+* Gravity rotation (`gravityRotationOmega`) now works for the Lagrangian particles also on refined meshes (step 202 was missing there).
+* Tests `nosphere_*` (`tests/test_nosphere.cpp`): resistance against the closed forms for a sphere and a prolate spheroid (Chwang & Wu) and against quadrature (1e-14), Jeffery period of a 3:1 spheroid (1e-5), the sphere limit identical to `problemID` 2 (difference 0), glide of a settling spheroid inclined by 45° (slip 0.06 % and 0.003° from the theory), rotation in a Couette flow (uniform mesh: 0.02 % from Jeffery; refined: the particle follows Jeffery with the interpolated gradient to 1e-4, the gradient itself is disturbed by ~1.5 % at the level interface), contact of an ellipsoid lying on a wall.
+
 ## Not done
 
 * AA-pattern (a single population array) and SoA layout.

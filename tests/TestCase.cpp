@@ -142,7 +142,17 @@ unique_ptr<Mesh> buildMesh(const CaseSpec& spec) {
 		}
 	}
 	bf.close();
-	if (!spec.particles.empty()) {
+	if (!spec.particleRows.empty()) {
+		ofstream f(sim + "init/particles.txt");
+		f.precision(17);
+		f << spec.particleRows.size() << "\n";
+		for (auto& q : spec.particleRows) {
+			for (size_t c = 0; c < q.size(); c++) {
+				f << q[c] << (c + 1 < q.size() ? " " : "\n");
+			}
+		}
+	}
+	else if (!spec.particles.empty()) {
 		ofstream f(sim + "init/particles.txt");
 		f.precision(17);
 		f << spec.particles.size() << "\n";

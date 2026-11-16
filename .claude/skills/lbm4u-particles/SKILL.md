@@ -1,6 +1,6 @@
 ---
 name: lbm4u-particles
-description: Explain, choose, set up and evaluate particle-laden free-surface flows in the cLBMnet / LBM4U solver with its three particle models - Lagrangian point particles (problemID 2), Eulerian concentration transported by finite volumes (problemID 3, FVM) and by a second set of LBM populations (problemID 4) - including settling, sedimentation, suspensions, particle clouds, two-way coupling, octree refinement and the input files particles.txt and the per-block concentration files. Use it whenever the user asks about particles, sand, sediment, inclusions, fillers, fibres-in-suspension, concentration or volume fraction in a simulation of this repository, wants to compare the Lagrange and Euler approaches, or asks for a description of the particle methods - also in Czech ("částice", "partikly", "usazování", "sedimentace", "koncentrace", "Lagrange", "Euler FVM", "Euler LBM", "popis metod"). Use together with lbm4u-free-surface (case files, units, running) and, for non-Newtonian carriers, lbm4u-non-newtonian.
+description: Explain, choose, set up and evaluate particle-laden free-surface flows in the cLBMnet / LBM4U solver - Lagrangian point particles (spheres problemID 2, rotating ellipsoids / non-spherical particles problemID 22), Eulerian concentration by finite volumes (problemID 3, FVM) and by LBM populations (problemID 4) - settling, suspensions, particle clouds, orientation and Jeffery rotation, two-way coupling, octree refinement, particles.txt and concentration files. Use it whenever the user asks about particles, sediment, fillers, flakes, short fibres, concentration or volume fraction in a simulation of this repository, compares the Lagrange and Euler approaches or wants the particle methods described - also in Czech ("částice", "partikly", "nekulové částice", "elipsoidy", "usazování", "sedimentace", "koncentrace", "popis metod"). Use with lbm4u-free-surface (case files, units, running) and, for non-Newtonian carriers, lbm4u-non-newtonian.
 ---
 
 # Particles in free-surface flow (cLBMnet / LBM4U)
@@ -31,6 +31,24 @@ Practical guidance from the tests and the settling-cloud study (21 runs, three m
   of extra settling speed; on a refined mesh this makes particles in the fine region settle slightly faster.
 * All models conserve the particle count: Lagrange exactly, FVM to round-off, LBM to ~1e-8 (also across refinement
   levels and when liquid cells empty - particles of a drying cell are handed to liquid neighbours).
+
+## Non-spherical particles (`problemID 22`)
+
+Rigid ellipsoids with semi-axes a1, a2, a3, orientation and rotation; everything else (interpolation, coupling,
+walls, refinement) is inherited from problemID 2. Use it for elongated or flat particles (fibres shorter than a cell,
+flakes, grains) when orientation-dependent drag (gliding, sideways drift) or alignment in shear matters.
+
+* `init/particles.txt`: number of particles, then `x y z a1 a2 a3 density qw qx qy qz [f1 f2 f3]` (SI). The
+  quaternion rotates the body axes to the lab frame (`1 0 0 0` = axes along x, y, z); `f1..f3` multiply the drag along
+  the body axes (default 1, use them to calibrate to measured drag). `make_case.py` writes it with `"shape"`.
+* Drag: exact Stokes resistance of the ellipsoid along each body axis × Schiller-Naumann correction (volume-equivalent
+  d); a 2:1 prolate spheroid has ~13 % less drag along its axis than across, a 45° tilt gives a glide of ~4°.
+* Rotation: Jeffery torque (creeping flow) with the interpolated fluid velocity gradient; in shear the particles tumble
+  on Jeffery orbits with period `2π/γ (r + 1/r)`. Inertial torques at finite Re (e.g. falling discs turning broadside)
+  are **not** modelled, and the particle torque is not returned to the liquid.
+* Keep the **largest** semi-axis below the cell size (point-particle limit). Longer fibres need another model.
+* Output: `output_particles*.vtk` has `TENSORS shape` (ParaView: Tensor Glyph with a sphere source shows the
+  ellipsoids), `axis1..3`, `angularVelocity`.
 
 ## Physics common to all models
 

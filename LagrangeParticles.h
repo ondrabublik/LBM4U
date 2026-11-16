@@ -19,6 +19,7 @@
 #include "math.h"
 #include <string>
 #include <unordered_map>
+#include <functional>
 
 #include "Block.h"
 
@@ -59,12 +60,13 @@ public:
 
 	LagrangeParticles(Block** blocks, int nBlock, int nBlockMax, int nBi, int nBj, int nBk, int ni, int nj, int nk, const ParamMap& par);
 
-	void readInitParticlesDistribution(string simulPath, double Ch, double Cu);
+	virtual ~LagrangeParticles() = default;
+	virtual void readInitParticlesDistribution(string simulPath, double Ch, double Cu);
 	void saveParticlesPositionsToVTK(string simulPath, int iter);
-	void interpolateFluidVelocity();
+	virtual void interpolateFluidVelocity();
 	void applyForce();
 	void boxParticles();
-	void newParticlePosition(double dt);
+	virtual void newParticlePosition(double dt);
 	void particleParticleInteraction();
 	double gammaPP(double L, double avgD, double uRel);
 	double gammaWall(double wallDistance, double D);
@@ -84,11 +86,17 @@ public:
 	// false if no computed block holds the point (the finest one is taken on a refined mesh)
 	bool locate(double x, double y, double z, Cell& c) const;
 
-private:
+protected:
 	void resize(int n);
 	// runs fn(block, cell, weight) for the liquid cells in the support of the delta function of the point
 	template <class F> void liquidCells(const Cell& c, F fn);
+	// the same for the derived models (the template is defined in LagrangeParticles.cpp)
+	void forLiquidCells(const Cell& c, const function<void(BlockFreeSurfaceLagrangeParticles*, int, double)>& fn);
 	void wallContact(int p, double x0, double y0, double z0, double L0, const double* n0);
+	// distance of the particle surface from its centre along the current wall normal (partWallNormal*)
+	virtual double contactRadius(int p) const { return partD[p] / 2; }
+	// additional particle data of the derived models in output_particles*.vtk (CELL_DATA section)
+	virtual void writeExtraVTK(ofstream& f) {}
 };
 
 #endif /* LAGRANGEPARTICLES_H */

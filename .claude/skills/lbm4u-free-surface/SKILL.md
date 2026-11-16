@@ -79,13 +79,13 @@ Worked example (dam break, water column 10 × 20 mm, h = 1 mm): U ≈ sqrt(2·9.
   layer is created by the solver between liquid and gas. `initializeWithHydroPress = 1` replaces ρ by the
   hydrostatic profile - use it for liquid initially at rest (avoids a pressure wave at t = 0).
 * Octree refinement: 2:1 balance across faces, edges and corners, even `ni, nj, nk`, not D2Q9; available for
-  problemID 0–4. `make_case.py` balances the tree automatically.
+  problemID 0–4 and 22. `make_case.py` balances the tree automatically.
 
 ## Main parameters
 
 | Parameter | Meaning |
 |---|---|
-| `problemID` | 0 single phase, **1 free surface**, 2 Lagrangian particles, 3 Euler FVM, 4 Euler LBM, 21 fibers |
+| `problemID` | 0 single phase, **1 free surface**, 2 Lagrangian particles, 22 ellipsoidal particles, 3 Euler FVM, 4 Euler LBM, 21 fibers |
 | `model` | 319 = D3Q19 (default choice), 315 = D3Q15, 29 = D2Q9 (`nk = 1`) |
 | `collisionModel` | 0 BGK, 1 MRT, 2 TRT |
 | `ni nj nk`, `H` | cells per block, block edge [m] |

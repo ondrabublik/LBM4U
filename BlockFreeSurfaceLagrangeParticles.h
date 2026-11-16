@@ -39,12 +39,14 @@ public:
     
     BlockFreeSurfaceLagrangeParticles(bool isFirst, Block **blocks, int nBlock, int nBlockMax, int *blockMap, int nBi, int nBj, int nBk, int indBlock, int level, int *indAll, int *indIn, int *indBound, int collisionModel, int viscosityModel, int nf, int *ex, int *ey, int *ez, double *w, int* opp, int ni, int nj, int nk, const ParamMap& par);
     
-    ~BlockFreeSurfaceLagrangeParticles();
+    virtual ~BlockFreeSurfaceLagrangeParticles();
 
     void collision();
 	void cellForce(int ind, double* acc, double& epsF);
 	double localTau(int ind);
     void computeGradP();
+	// cell fields interpolated to the particles at the start of the particle step
+	virtual void computeParticleFields() { computeGradP(); }
 	void computeConcentrationAndFluidFraction();
 };
 

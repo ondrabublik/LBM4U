@@ -127,7 +127,13 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 	Block* b0 = blocks[blockId[0]];
 	switch (problemID) {
 	case 2:
-		particles = new LagrangeParticles(blocks, nBlock, nBlockMax, nBi, nBj, nBk, ni, nj, nk, par);
+	case 22:
+		if (problemID == 22) {
+			particles = new LagrangeNoSphereParticles(blocks, nBlock, nBlockMax, nBi, nBj, nBk, ni, nj, nk, par);
+		}
+		else {
+			particles = new LagrangeParticles(blocks, nBlock, nBlockMax, nBi, nBj, nBk, ni, nj, nk, par);
+		}
 		particles->grid = &grid;
 		particles->readInitParticlesDistribution(simulPath, b0->Ch * (1 << b0->level), b0->Cu); // cells of the level 0
 		break;
@@ -136,7 +142,7 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 		fibers->readInitFibersDistribution(simulPath, b0->Ch * (1 << b0->level), b0->Cu);
 		break;
 	}
-	if ((problemID == 2 || problemID == 4) && gravityRotationOmega != 0) {
+	if ((isLagrangeParticles() || problemID == 4) && gravityRotationOmega != 0) {
 		cout << "gravity (gx, gy) rotates around the z axis, omega = " << gravityRotationOmega << " rad/s" << endl;
 	}
 }
@@ -171,7 +177,7 @@ Mesh::~Mesh() {
 }
 
 bool Mesh::isFreeSurface() const {
-	return problemID == 1 || problemID == 2 || problemID == 21 || problemID == 3 || problemID == 4;
+	return problemID == 1 || problemID == 2 || problemID == 21 || problemID == 22 || problemID == 3 || problemID == 4;
 }
 
 void Mesh::initIndexes() {
@@ -354,7 +360,7 @@ void Mesh::evalBlocks(int iter, int step) {
 
 		// Lagrangian particles
 	case 20:
-		forBlocks([](Block* b) { ((BlockFreeSurfaceLagrangeParticles*)b)->computeGradP(); }, false);
+		forBlocks([](Block* b) { ((BlockFreeSurfaceLagrangeParticles*)b)->computeParticleFields(); }, false);
 		particles->boxParticles();
 		particles->interpolateFluidVelocity();
 		for (int s = 0; s < nIntIterParticle; s++) {
@@ -534,6 +540,7 @@ void Mesh::advanceLevel(int level, int iterLevel) {
 		break;
 	case 1:
 	case 2:
+	case 22:
 	case 3:
 	case 4:
 		advanceFreeSurfaceLevel(level, iterLevel);
@@ -784,8 +791,9 @@ void Mesh::advanceFreeSurfaceLevel(int level, int iterLevel) {
 // one time step of the selected problem
 void Mesh::timeStep(int iter) {
 	if (maxLevel > 0) {
-		if (problemID == 2) {
+		if (isLagrangeParticles()) {
 			// one step of the particles per step of the level 0, their force acts in all steps of the finer levels
+			evalBlocks(iter, 202); // rotation of the gravity (if any)
 			evalBlocks(iter, 20);
 		}
 		advanceLevel(0, iter);
@@ -809,7 +817,8 @@ void Mesh::timeStep(int iter) {
 		evalBlocks(iter, 10); // mass redistribution
 		evalBlocks(iter, 11); // check empty block flag
 		break;
-	case 2: // free surface LBM with particles
+	case 2: // free surface LBM with particles (22: non-spherical)
+	case 22:
 		evalBlocks(iter, 202);
 		evalBlocks(iter, 2);
 		evalBlocks(iter, 3);
@@ -990,6 +999,8 @@ Block* Mesh::createBlock(int indBlock, int level, bool isFirst, const ParamMap& 
 		return new BlockFreeSurface(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 	case 2:
 		return new BlockFreeSurfaceLagrangeParticles(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	case 22:
+		return new BlockFreeSurfaceLagrangeNoSphereParticles(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 	case 21:
 		return new BlockFreeSurfaceLagrangeFibers(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 	case 3:
@@ -1040,8 +1051,8 @@ int Mesh::loadStructure(string geomPath) {
 		if (ni % 2 || nj % 2 || nk % 2) {
 			throw invalid_argument("grid refinement requires even block dimensions ni, nj, nk");
 		}
-		if (problemID != 0 && problemID != 1 && problemID != 2 && problemID != 3 && problemID != 4) {
-			throw invalid_argument("grid refinement is available for problemID 0, 1, 2, 3 and 4 only");
+		if (problemID != 0 && problemID != 1 && problemID != 2 && problemID != 22 && problemID != 3 && problemID != 4) {
+			throw invalid_argument("grid refinement is available for problemID 0, 1, 2, 22, 3 and 4 only");
 		}
 	}
 	if (nk == 1 && nBk == 1) {
@@ -1865,6 +1876,7 @@ namespace {
 void Mesh::writeResultsToVTK(int iter) {
 	switch (problemID) {
 	case 2:
+	case 22:
 		particles->saveParticlesPositionsToVTK(simulPath, iter);
 		break;
 	case 21:
@@ -1913,7 +1925,7 @@ void Mesh::writeResultsToVTK(int iter) {
 		});
 	}
 
-	if (problemID == 2) {
+	if (isLagrangeParticles()) {
 		scalar("concentration", [](Block* b, int ind) { return ((BlockFreeSurfaceLagrangeParticles*)b)->concentration[ind]; });
 		scalar("particle_volume_fraction", [](Block* b, int ind) { return ((BlockFreeSurfaceLagrangeParticles*)b)->particleFraction[ind]; });
 	}

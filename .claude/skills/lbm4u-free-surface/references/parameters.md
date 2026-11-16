@@ -7,7 +7,7 @@ with *. Source of truth: `getPar*` calls in `Block.cpp`, `Mesh.cpp`, `BlockFreeS
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `problemID`* | | 0 single phase, 1 free surface, 2 Lagrangian particles, 3 Euler FVM particles, 4 Euler LBM particles, 21 Lagrangian fibers |
+| `problemID`* | | 0 single phase, 1 free surface, 2 Lagrangian particles, 22 Lagrangian ellipsoids (rotating), 3 Euler FVM particles, 4 Euler LBM particles, 21 Lagrangian fibers |
 | `model`* | | 319 D3Q19, 315 D3Q15, 29 D2Q9 (requires `nk = 1`, no refinement) |
 | `ni`*, `nj`*, `nk`* | | cells per block |
 | `H`* | | edge of a level-0 block [m]; cell size `h = H / ni` |
@@ -59,7 +59,7 @@ with *. Source of truth: `getPar*` calls in `Block.cpp`, `Mesh.cpp`, `BlockFreeS
 
 | Parameter | Default | Model | Meaning |
 |---|---|---|---|
-| `nIntIter` | 1 | 2 | particle sub-steps per level-0 step |
+| `nIntIter` | 1 | 2, 22 | particle sub-steps per level-0 step |
 | `maxParticlesInCell` | 500 | 2 | capacity of the cell lists of particles |
 | `couplingWayNumber` | 2 | 2 | 4: the fluid equations use the fluid volume fraction 1 − φ |
 | `particleRestitution` | 1 | 2 | restitution of the wall-normal velocity (0-1) |
@@ -79,4 +79,5 @@ with *. Source of truth: `getPar*` calls in `Block.cpp`, `Mesh.cpp`, `BlockFreeS
 
 Fields in `output_*.vtu`: velocity, relative_pressure, VOF, FLAGMAP (1 liquid, 2 gas, 3 interface), curvature,
 surfaceLevel, with a non-Newtonian liquid also shearRate and viscosity, with particles concentration and
-model-specific fields. `output_particles<time>us.vtk`: Lagrangian particle positions in cells of level 0.
+model-specific fields. `output_particles<time>us.vtk`: Lagrangian particle positions in cells of level 0 (problemID 22 also the shape tensor,
+body axes and angular velocity).

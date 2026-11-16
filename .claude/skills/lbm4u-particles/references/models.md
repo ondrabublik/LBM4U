@@ -14,6 +14,7 @@ Files: `LagrangeParticles.cpp`, `BlockFreeSurfaceLagrangeParticles.cpp` (problem
 4. Euler FVM
 5. Euler LBM
 6. Refinement and free surface
+7. Non-spherical particles (problemID 22)
 
 ## 1. Drag and the equation of motion
 
@@ -109,3 +110,27 @@ in FVM. D below ~`0.005 h Cu` tends to be unstable; larger D smears the solution
   g is exchanged like the liquid populations (explode with 1/8, coalesce as the sum) with a balance correction.
 * Free surface: when a cell stops being liquid, its particles are handed to liquid neighbours (FVM, LBM); gas
   cells hold no concentration. c is per cell also in interface cells (not scaled by the fill level).
+
+## 7. Non-spherical particles (problemID 22)
+
+Rigid ellipsoids, semi-axes a_i along the body axes, rotation matrix R (body → lab) from a unit quaternion q.
+
+```
+chi0 = a1a2a3 ∫0^∞ dλ/Δ = 2 a1a2a3 R_F(a1², a2², a3²)
+alpha_i = a1a2a3 ∫0^∞ dλ/((a_i²+λ)Δ) = 2/3 a1a2a3 R_D(a_j², a_k², a_i²),   Δ = sqrt((a1²+λ)(a2²+λ)(a3²+λ))
+KT_i = 16π a1a2a3 / (chi0 + a_i² alpha_i)                         (translation, sphere: 6πa)
+KR_i = 16π a1a2a3 (a_j² + a_k²) / (3 (a_j² alpha_j + a_k² alpha_k))   (rotation, sphere: 8πa³)
+```
+
+Translation (implicit, lab frame): `(m/Δt I + K) v^{n+1} = m v^n/Δt + K u + (m − ρV) g + F_other`,
+`K = R diag(f_i μ KT_i g(Re)) Rᵀ`, `g(Re) = 1 + 0.15 Re^0.687` (Re with the volume-equivalent diameter, 0.44 Re/24
+above Re = 1000). The reaction `K (v − u)` is spread to the liquid as in section 3.
+
+Rotation (body frame, implicit in the torque): `I_i dω_i/dt + (I_k − I_j) ω_j ω_k = μ KR_i (ω^J_i − ω_i)` with the
+Jeffery angular velocity `ω^J_i = Ω_i + (a_j² − a_k²)/(a_j² + a_k²) E_jk` (Ω half vorticity, E strain rate, both
+transformed to the body frame), `I_1 = m (a2² + a3²)/5`. Then `q ← q ⊗ (cos(|ω|Δt/2), ω/|ω| sin(|ω|Δt/2))`.
+For small particles the relaxation time `I/(μ KR)` is far below Δt and ω = ω^J (Jeffery orbits).
+
+Velocity gradient per liquid cell: `∂u_a/∂x_b = 3 Σ_i w_i e_ib u_a(x + e_i)`; behind a wall the mirror value
+`2 u_wall − u`, behind gas or an outlet the cell value. Interpolated with the velocity kernel (scaled by 2^L to cells of
+level 0 on refined meshes). Wall contact uses the support function `sqrt(nᵀ R diag(a²) Rᵀ n)`.

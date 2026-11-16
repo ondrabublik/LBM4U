@@ -143,6 +143,10 @@ template <class F> void LagrangeParticles::liquidCells(const Cell& c, F fn) {
 	}
 }
 
+void LagrangeParticles::forLiquidCells(const Cell& c, const function<void(LagBlock*, int, double)>& fn) {
+	liquidCells(c, fn);
+}
+
 // one step of the equation of motion (implicit drag) and of the position, dtP is a fraction of the LBM step
 void LagrangeParticles::newParticlePosition(double dtP) {
 #pragma omp parallel for schedule(guided)
@@ -205,8 +209,8 @@ void LagrangeParticles::newParticlePosition(double dtP) {
 // normal to the distance d/2 and the velocity component towards the wall is reflected. The tangential
 // motion is kept, so the particle can slide along the wall.
 void LagrangeParticles::wallContact(int p, double x0, double y0, double z0, double L0, const double* n0) {
-	double r = partD[p] / 2;
-	double L = wallDistance(p, partX[p], partY[p], partZ[p]);
+	double L = wallDistance(p, partX[p], partY[p], partZ[p]); // also sets the wall normal
+	double r = contactRadius(p);
 	bool contact = false;
 	for (int it = 0; it < 4 && L >= 0 && L < r; it++) {
 		// the distance function is not exact near the edges, a few corrections are enough
@@ -215,6 +219,7 @@ void LagrangeParticles::wallContact(int p, double x0, double y0, double z0, doub
 		partY[p] += (r - L) * partWallNormalY[p];
 		partZ[p] += (r - L) * partWallNormalZ[p];
 		L = wallDistance(p, partX[p], partY[p], partZ[p]);
+		r = contactRadius(p);
 	}
 	if (L >= 0) {
 		if (contact) {
@@ -620,6 +625,7 @@ void LagrangeParticles::saveParticlesPositionsToVTK(string simulPath, int iter) 
 		myfile << Gx[i] * Cf << " " << Gy[i] * Cf << " " << Gz[i] * Cf << "\n";
 	}
 	myfile << "\n";
+	writeExtraVTK(myfile);
 
 	myfile.close();
 }

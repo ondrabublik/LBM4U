@@ -22,7 +22,7 @@ LLLLLL  BBBBB   M      M      4    UUUUU
 * **Non-Newtonian fluids**: power-law, Bingham, Cross, polynomial; shear rate from the non-equilibrium moments.
 * Boundary conditions: bounce-back wall, velocity inlet, pressure outlet (anti-bounce-back), moving wall.
 * **Static octree grid refinement** driven by the geometry: 2:1 balancing, sub-cycling of the fine levels, volumetric level interface (Rohde et al.), mass conserved to machine precision – including the free surface.
-* Particles and fibers: Lagrangian particles, fibers and an Eulerian concentration model (FVM / LBM).
+* Particles and fibers: Lagrangian particles (spheres and rotating ellipsoids), fibers and an Eulerian concentration model (FVM / LBM).
 * **VTK XML** output (`.vtu`, `.vtp`, `.pvd`) with zlib compression – opens directly in ParaView, plus compact `fields_<iter>.bin` files for the GUI.
 * Optional single precision populations (`-DLBM_FP32=ON`) – half the memory.
 

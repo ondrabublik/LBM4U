@@ -18,6 +18,8 @@ The JSON (all lengths in metres, SI units):
   "velocity": [0, 0, 0],                         # optional initial velocity of the liquid [m/s]
   "params": {"problemID": 1, "uMax": 0.6, ...},  # anything for parameters.txt (H, ni, nj, nk are added)
   "particles": {"sphere": [x, y, z, R], "d": 1e-4, "rho": 2500, "phi": 0.005, "seed": 1},   # problemID 2
+  # problemID 22 (ellipsoids): "shape": [a1, a2, a3] (semi-axes [m]) instead of "d", optional
+  # "orientation": "random" (default) or [qw, qx, qy, qz] and "drag_factors": [f1, f2, f3]
   "concentration": {"sphere": [x, y, z, R], "d": 1e-4, "phi": 0.005}                      # problemID 3, 4
 }
 "particles" may also be {"list": [[x, y, z, d, rho], ...]}; "sphere" may be replaced by "box": [x0,y0,z0,x1,y1,z1]
@@ -241,7 +243,8 @@ def main():
         else:
             rng = np.random.default_rng(part.get("seed", 1))
             L = [nb[d] * n * h0 for d in range(3)]
-            vp = math.pi / 6 * part["d"] ** 3
+            shape = part.get("shape")
+            vp = 4.0 / 3.0 * math.pi * shape[0] * shape[1] * shape[2] if shape else math.pi / 6 * part["d"] ** 3
             # sample candidates in the bounding box of the domain, keep those in the region
             cand = rng.random((200000, 3)) * L
             inside = region(part, cand[:, 0], cand[:, 1], cand[:, 2])
@@ -251,11 +254,24 @@ def main():
             while len(sel) < count:
                 more = rng.random((200000, 3)) * L
                 sel = np.vstack([sel, more[region(part, more[:, 0], more[:, 1], more[:, 2])]])
-            pts = [[q[0], q[1], q[2], part["d"], part["rho"]] for q in sel[:count]]
+            if shape:
+                ori = part.get("orientation", "random")
+                fac = list(part.get("drag_factors", [1, 1, 1]))
+                pts = []
+                for q in sel[:count]:
+                    if ori == "random":  # uniform random rotation (Shoemake)
+                        u1, u2, u3 = rng.random(3)
+                        qq = [math.sqrt(u1) * math.cos(2 * math.pi * u3), math.sqrt(1 - u1) * math.sin(2 * math.pi * u2),
+                              math.sqrt(1 - u1) * math.cos(2 * math.pi * u2), math.sqrt(u1) * math.sin(2 * math.pi * u3)]
+                    else:
+                        qq = list(ori)
+                    pts.append([q[0], q[1], q[2], shape[0], shape[1], shape[2], part["rho"]] + qq + fac)
+            else:
+                pts = [[q[0], q[1], q[2], part["d"], part["rho"]] for q in sel[:count]]
         with open(os.path.join(sim, "init", "particles.txt"), "w") as f:
             f.write("%d\n" % len(pts))
             for q in pts:
-                f.write("%.10g %.10g %.10g %.10g %.10g\n" % tuple(q))
+                f.write(" ".join("%.10g" % v for v in q) + "\n")
         print("Lagrangian particles: %d -> init/particles.txt" % len(pts))
     print("written: %s" % sim)
 

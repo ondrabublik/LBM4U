@@ -30,6 +30,9 @@ struct CaseSpec {
 	std::function<bool(int, int, int)> blockExists;
 	// Lagrangian particles (problemID 2): x, y, z, diameter, density in physical units -> init/particles.txt
 	std::vector<std::array<double, 5> > particles;
+	// any particle lines (e.g. ellipsoids of problemID 22: x y z a1 a2 a3 density qw qx qy qz [f1 f2 f3]),
+	// used instead of particles when not empty
+	std::vector<std::vector<double> > particleRows;
 	// Eulerian particles (problemID 3, 4): number of particles in a global cell -> init/concentration<id>.txt
 	std::function<double(int, int, int)> concentration;
 
