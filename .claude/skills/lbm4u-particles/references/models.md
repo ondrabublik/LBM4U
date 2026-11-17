@@ -3,7 +3,9 @@
 Lattice units inside the solver (h = Δt = ρ = 1 on level 0); the formulas below are written in physical form. The
 liquid is the free-surface LBM (D3Q19, BGK/TRT/MRT); u is its velocity, ν its viscosity, ρ its density.
 Files: `LagrangeParticles.cpp`, `BlockFreeSurfaceLagrangeParticles.cpp` (problemID 2),
-`BlockFreeSurfaceEulerParticlesFVM.cpp` (3), `BlockFreeSurfaceEulerParticlesLBM.cpp` (4), time stepping in
+`BlockFreeSurfaceEulerParticlesFVM.cpp` (3), `BlockFreeSurfaceEulerParticlesLBM.cpp` (4), spheroids
+`BlockFreeSurfaceEulerNoSphereParticlesFVM.cpp` (33), `BlockFreeSurfaceEulerNoSphereParticlesLBM.cpp` (42) with
+`SpheroidOrientation.cpp`, time stepping in
 `Mesh::timeStep`, `Mesh::eulerLevelStep`.
 
 ## Contents
@@ -16,6 +18,7 @@ Files: `LagrangeParticles.cpp`, `BlockFreeSurfaceLagrangeParticles.cpp` (problem
 6. Refinement and free surface
 7. Non-spherical particles (problemID 22)
 8. Eulerian spheroids (problemID 33)
+9. Eulerian spheroids with LBM (problemID 42)
 
 ## 1. Drag and the equation of motion
 
@@ -159,3 +162,21 @@ hybrid = f quadratic + (1 - f) linear,  f = 1 - 27 det A
 The hybrid closure is exact for aligned (f = 1) and random (f = 0) particles. After each step A is renormalised to trace
 1 and negative eigenvalues are cut. Refinement: q is exchanged with c at the level interface (exchangeOrient), coarse
 ghosts get the c-weighted mean of A.
+
+## 9. Eulerian spheroids with LBM (problemID 42)
+
+Populations g_i of problemID 4 for c, drag and Folgar-Tucker of problemID 33 (`SpheroidOrientation`). Velocity:
+
+```
+(m I + K) v_new = m (v - (v·∇)v) + K u + (m - ρV) g,   K = <M>^-1 μ g(Re)       force on the liquid c K (v - u)
+```
+
+Transport of A: each population carries A of the cell it streams from (A of the cell itself after a bounce-back):
+
+```
+A(x, t+1) = Σ_i g_i(x, t+1) A(x - e_i, t) / Σ_i g_i(x, t+1)
+```
+
+so Σ_x (Σ_i g_i) A is conserved like Σ g, A stays a convex combination and a uniform A is kept. If a cell receives a
+negative population, the positive ones only are used as weights (no extrapolation). Refinement: the populations of
+the exchange balance (exchangeCorr) carry A of the cell they leave (exchangeOrient). Then the Folgar-Tucker step.

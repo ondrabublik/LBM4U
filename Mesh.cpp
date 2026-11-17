@@ -142,7 +142,7 @@ Mesh::Mesh(string geomPath, string simulPath, const ParamMap& par) {
 		fibers->readInitFibersDistribution(simulPath, b0->Ch * (1 << b0->level), b0->Cu);
 		break;
 	}
-	if ((isLagrangeParticles() || problemID == 4) && gravityRotationOmega != 0) {
+	if ((isLagrangeParticles() || isEulerLBM()) && gravityRotationOmega != 0) {
 		cout << "gravity (gx, gy) rotates around the z axis, omega = " << gravityRotationOmega << " rad/s" << endl;
 	}
 }
@@ -177,7 +177,7 @@ Mesh::~Mesh() {
 }
 
 bool Mesh::isFreeSurface() const {
-	return problemID == 1 || problemID == 2 || problemID == 21 || problemID == 22 || problemID == 3 || problemID == 33 || problemID == 4;
+	return problemID == 1 || problemID == 2 || problemID == 21 || problemID == 22 || problemID == 3 || problemID == 33 || problemID == 4 || problemID == 42;
 }
 
 void Mesh::initIndexes() {
@@ -253,7 +253,7 @@ void Mesh::initBlocks() {
 			((BlockFreeSurfaceEulerParticlesFVM*)blocks[indBlock])->readInitConcentration(indBlock, simulPath);
 		}
 	}
-	else if (problemID == 4) {
+	else if (isEulerLBM()) {
 		for (int i = 0; i < nBlock; i++) {
 			int indBlock = blockId[i];
 			((BlockFreeSurfaceEulerParticlesLBM*)blocks[indBlock])->readInitConcentration(indBlock, simulPath);
@@ -425,10 +425,7 @@ void Mesh::evalBlocks(int iter, int step) {
 		if (any) {
 			forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesLBM*)b)->collectReleased(); }, false);
 		}
-		forBlocks([](Block* b) {
-			((BlockFreeSurfaceEulerParticlesLBM*)b)->computeGradU();
-			((BlockFreeSurfaceEulerParticlesLBM*)b)->interpolateFluidVelocity();
-		}, false);
+		forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesLBM*)b)->prepareParticleStep(); }, false);
 		break;
 	}
 
@@ -463,6 +460,10 @@ void Mesh::evalBlocks(int iter, int step) {
 		break;
 	}
 
+	case 44: // exchange with the other level (refined mesh), orientation of the spheroids (problemID 42)
+		forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesLBM*)b)->applyExchangeCorr(); }, false);
+		break;
+
 	case 45:
 		forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesLBM*)b)->collisionScalar(); }, false);
 		break;
@@ -495,14 +496,14 @@ void Mesh::evalBlocks(int iter, int step) {
 void Mesh::advanceLevel(int level, int iterLevel) {
 	if (level < maxLevel) {
 		computeLost(level);
-		if (problemID == 4) {
+		if (isEulerLBM()) {
 			scalarLost(level);
 		}
 		explodeToGhosts(level + 1);
 		advanceLevel(level + 1, 2 * iterLevel);
 		advanceLevel(level + 1, 2 * iterLevel + 1);
 		coalesceToGhosts(level, true);
-		if (problemID == 4) {
+		if (isEulerLBM()) {
 			scalarCoalesce(level);
 		}
 	}
@@ -539,6 +540,7 @@ void Mesh::advanceLevel(int level, int iterLevel) {
 	case 3:
 	case 33:
 	case 4:
+	case 42:
 		advanceFreeSurfaceLevel(level, iterLevel);
 		break;
 	}
@@ -561,7 +563,7 @@ void Mesh::eulerLevelStep(int level, int iterLevel) {
 		}
 		forBlocks([](Block* b) { ((FVM*)b)->applyFlux(); });
 	}
-	else if (problemID == 4) {
+	else if (isEulerLBM()) {
 		evalBlocks(iterLevel, 40); // particles of emptied cells, velocity gradient, fluid velocity
 		evalBlocks(iterLevel, 41); // particle velocity, force
 		evalBlocks(iterLevel, 42); // smoothing of the force, propagation of the scalar
@@ -569,7 +571,7 @@ void Mesh::eulerLevelStep(int level, int iterLevel) {
 			forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) { ((LBM*)blocks[g.slot])->propagateScalarCells(g.near2); });
 			scalarAccount(level);
 		}
-		forBlocks([](Block* b) { ((LBM*)b)->applyExchangeCorr(); }, false);
+		evalBlocks(iterLevel, 44); // exchange with the coarser level, orientation
 		evalBlocks(iterLevel, 43); // concentration
 		evalBlocks(iterLevel, 45); // collision of the scalar
 		if (level > 0) {
@@ -606,10 +608,13 @@ namespace {
 // scalar populations of the computed cells of the level streaming towards the finer level
 void Mesh::scalarLost(int level) {
 	typedef BlockFreeSurfaceEulerParticlesLBM LBM;
+	typedef BlockFreeSurfaceEulerNoSphereParticlesLBM NSL;
 	int saved = curLevel;
 	curLevel = level;
-	forBlocks([this](Block* b) {
+	bool spheroids = problemID == 42;
+	forBlocks([this, spheroids](Block* b) {
 		LBM* e = (LBM*)b;
+		NSL* ns = spheroids ? (NSL*)b : nullptr;
 		for (int i = 0; i < b->nBound; i++) {
 			int ind = b->indBound[i];
 			if (!liquidCell(b, ind)) {
@@ -620,6 +625,11 @@ void Mesh::scalarLost(int level) {
 				int loc = b->nbLocal(ind, p);
 				if (bl >= 0 && blocks[bl]->ghost == GHOST_FROM_FINER && liquidCell(blocks[bl], loc)) {
 					e->exchangeCorr[ind] += e->gc[nf * ind + p];
+					if (ns) { // the population leaves with the orientation of the cell
+						for (int k = 0; k < 6; k++) {
+							ns->exchangeOrient[6 * ind + k] += e->gc[nf * ind + p] * ns->orient[6 * ind + k];
+						}
+					}
 				}
 			}
 		}
@@ -631,7 +641,9 @@ void Mesh::scalarLost(int level) {
 // streamed into the 8 finer cells covering the destination cell (the populations hold numbers of particles)
 void Mesh::scalarCoalesce(int level) {
 	typedef BlockFreeSurfaceEulerParticlesLBM LBM;
-	forGhosts(level, GHOST_FROM_FINER, [this, level](GhostBlock& g) {
+	typedef BlockFreeSurfaceEulerNoSphereParticlesLBM NSL;
+	bool spheroids = problemID == 42;
+	forGhosts(level, GHOST_FROM_FINER, [this, level, spheroids](GhostBlock& g) {
 		LBM* b = (LBM*)blocks[g.slot];
 		for (int ind : g.near1) {
 			if (!liquidCell(b, ind)) {
@@ -663,6 +675,14 @@ void Mesh::scalarCoalesce(int level) {
 				double* mc = &dest->exchangeCorr[loc];
 #pragma omp atomic
 				*mc -= sum; // received by the coarser level
+				if (spheroids) { // with the orientation of the ghost cell
+					const double* A = &((NSL*)b)->orient[6 * ind];
+					double* mq = &((NSL*)dest)->exchangeOrient[6 * loc];
+					for (int k = 0; k < 6; k++) {
+#pragma omp atomic
+						mq[k] -= sum * A[k];
+					}
+				}
 			}
 		}
 	});
@@ -672,13 +692,17 @@ void Mesh::scalarCoalesce(int level) {
 // propagation, the balance goes to the coarser cell covering the ghost cell
 void Mesh::scalarAccount(int level) {
 	typedef BlockFreeSurfaceEulerParticlesLBM LBM;
-	forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
+	typedef BlockFreeSurfaceEulerNoSphereParticlesLBM NSL;
+	bool spheroids = problemID == 42;
+	forGhosts(level, GHOST_FROM_COARSER, [this, spheroids](GhostBlock& g) {
 		LBM* b = (LBM*)blocks[g.slot];
 		for (int ind : g.near1) {
 			if (!liquidCell(b, ind)) {
 				continue;
 			}
 			double d = 0;
+			// spheroids: the populations carry the orientation of the cell they leave (the old one, see NSL::orientNew)
+			double dq[6] = { 0, 0, 0, 0, 0, 0 };
 			for (int i = 1; i < nf; i++) {
 				int bl = b->nbBlock(ind, i);
 				int loc = b->nbLocal(ind, i);
@@ -687,11 +711,27 @@ void Mesh::scalarAccount(int level) {
 				}
 				d -= b->gc[nf * ind + i];      // received by the computed cell
 				d += b->g[nf * ind + opp[i]];  // sent by the computed cell
+				if (spheroids) {
+					const double* Ag = &((NSL*)b)->orient[6 * ind];
+					const double* Ac = &((NSL*)blocks[bl])->orient[6 * loc];
+					for (int k = 0; k < 6; k++) {
+						dq[k] += b->g[nf * ind + opp[i]] * Ac[k] - b->gc[nf * ind + i] * Ag[k];
+					}
+				}
 			}
 			if (d != 0) {
 				double* mc = &((LBM*)blocks[g.srcBlock[ind]])->exchangeCorr[g.srcLocal[ind]];
 #pragma omp atomic
 				*mc += d;
+			}
+			if (spheroids) {
+				double* mq = &((NSL*)blocks[g.srcBlock[ind]])->exchangeOrient[6 * g.srcLocal[ind]];
+				for (int k = 0; k < 6; k++) {
+					if (dq[k] != 0) {
+#pragma omp atomic
+						mq[k] += dq[k];
+					}
+				}
 			}
 		}
 	});
@@ -743,7 +783,7 @@ void Mesh::advanceFreeSurfaceLevel(int level, int iterLevel) {
 		accountInterface(level);
 	}
 	applyMassCorr(level);
-	if (isEulerFVM() || problemID == 4) {
+	if (isEulerFVM() || isEulerLBM()) {
 		eulerLevelStep(level, iterLevel);
 	}
 
@@ -854,6 +894,7 @@ void Mesh::timeStep(int iter) {
 		evalBlocks(iter, 11); // check empty block flag
 		break;
 	case 4: // free surface LBM with euler particles - solve transport eq. using LBM
+	case 42: // the same for non-spherical particles
 		evalBlocks(iter, 402);
 		evalBlocks(iter, 2);  // mass exchange, find filled/emptied cells
 		evalBlocks(iter, 3);
@@ -865,6 +906,7 @@ void Mesh::timeStep(int iter) {
 		evalBlocks(iter, 40); // compute GradP + interpolate fluid velocity
 		evalBlocks(iter, 41); // compute new particle velocity
 		evalBlocks(iter, 42); // smooth force + propagation of scalar
+		evalBlocks(iter, 44); // orientation (problemID 42)
 		evalBlocks(iter, 43); // compute concentration
 		evalBlocks(iter, 45); // collision of scalar
 		evalBlocks(iter, 8);  // macro, collision, new fs
@@ -999,6 +1041,8 @@ Block* Mesh::createBlock(int indBlock, int level, bool isFirst, const ParamMap& 
 		return new BlockFreeSurfaceEulerNoSphereParticlesFVM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 	case 4:
 		return new BlockFreeSurfaceEulerParticlesLBM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	case 42:
+		return new BlockFreeSurfaceEulerNoSphereParticlesLBM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 	default:
 		throw invalid_argument("unknown problemID " + to_string(problemID));
 	}
@@ -1043,8 +1087,8 @@ int Mesh::loadStructure(string geomPath) {
 		if (ni % 2 || nj % 2 || nk % 2) {
 			throw invalid_argument("grid refinement requires even block dimensions ni, nj, nk");
 		}
-		if (problemID != 0 && problemID != 1 && problemID != 2 && problemID != 22 && !isEulerFVM() && problemID != 4) {
-			throw invalid_argument("grid refinement is available for problemID 0, 1, 2, 22, 3, 33 and 4 only");
+		if (problemID != 0 && problemID != 1 && problemID != 2 && problemID != 22 && !isEulerFVM() && !isEulerLBM()) {
+			throw invalid_argument("grid refinement is available for problemID 0, 1, 2, 22, 3, 33, 4 and 42 only");
 		}
 	}
 	if (nk == 1 && nBk == 1) {
@@ -1938,33 +1982,39 @@ void Mesh::writeResultsToVTK(int iter) {
 		});
 	}
 
-	if (problemID == 33) {
-		typedef BlockFreeSurfaceEulerNoSphereParticlesFVM E;
+	if (problemID == 33 || problemID == 42) {
+		// orientation tensor of the spheroids (SpheroidOrientation of the block)
+		bool fvm = problemID == 33;
+		auto orientOf = [fvm](Block* b, int ind) -> const double* {
+			SpheroidOrientation* o = fvm ? (SpheroidOrientation*)(BlockFreeSurfaceEulerNoSphereParticlesFVM*)b
+				: (SpheroidOrientation*)(BlockFreeSurfaceEulerNoSphereParticlesLBM*)b;
+			return &o->orient[6 * ind];
+		};
 		vector<float> t;
 		t.reserve(9 * nc);
 		forCells(blocks, blockId, nBlock, false, [&](Block* b, int ind) {
-			const double* A = &((E*)b)->orient[6 * ind];
+			const double* A = orientOf(b, ind);
 			const double full[9] = { A[0], A[3], A[4], A[3], A[1], A[5], A[4], A[5], A[2] };
 			for (int k = 0; k < 9; k++) {
 				t.push_back((float)full[k]);
 			}
 		});
 		vtk.add("CellData", "orientation_tensor", t, 9);
-		vector3("orientation_direction", [](Block* b, int ind, double* a) {
+		vector3("orientation_direction", [&](Block* b, int ind, double* a) {
 			double val[3], vec[9];
-			E::eigenSym(&((E*)b)->orient[6 * ind], val, vec);
+			SpheroidOrientation::eigenSym(orientOf(b, ind), val, vec);
 			a[0] = vec[0];
 			a[1] = vec[3];
 			a[2] = vec[6];
 		});
-		scalar("orientation_alignment", [](Block* b, int ind) {
+		scalar("orientation_alignment", [&](Block* b, int ind) {
 			double val[3], vec[9];
-			E::eigenSym(&((E*)b)->orient[6 * ind], val, vec);
+			SpheroidOrientation::eigenSym(orientOf(b, ind), val, vec);
 			return val[0];
 		});
 	}
 
-	if (problemID == 4) {
+	if (isEulerLBM()) {
 		typedef BlockFreeSurfaceEulerParticlesLBM E;
 		scalar("concentration", [](Block* b, int ind) { return ((E*)b)->concentration[ind]; });
 		scalar("user_def", [](Block* b, int ind) { return ((E*)b)->user_def[ind]; });

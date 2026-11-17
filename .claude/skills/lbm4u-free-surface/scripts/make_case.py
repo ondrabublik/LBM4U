@@ -20,8 +20,8 @@ The JSON (all lengths in metres, SI units):
   "particles": {"sphere": [x, y, z, R], "d": 1e-4, "rho": 2500, "phi": 0.005, "seed": 1},   # problemID 2
   # problemID 22 (ellipsoids): "shape": [a1, a2, a3] (semi-axes [m]) instead of "d", optional
   # "orientation": "random" (default) or [qw, qx, qy, qz] and "drag_factors": [f1, f2, f3]
-  "concentration": {"sphere": [x, y, z, R], "d": 1e-4, "phi": 0.005}                      # problemID 3, 4, 33
-  # problemID 33 (spheroids, params particleAspectRatio): optional "orientation": "random" (default, A = I/3),
+  "concentration": {"sphere": [x, y, z, R], "d": 1e-4, "phi": 0.005}                      # problemID 3, 4, 33, 42
+  # problemID 33, 42 (spheroids, params particleAspectRatio): optional "orientation": "random" (default, A = I/3),
   # [px, py, pz] (all particles along this axis) or [A11, A22, A33, A12, A13, A23] -> init/orientation*.txt
 }
 "particles" may also be {"list": [[x, y, z, d, rho], ...]}; "sphere" may be replaced by "box": [x0,y0,z0,x1,y1,z1]

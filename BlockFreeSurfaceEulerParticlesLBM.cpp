@@ -407,23 +407,33 @@ void BlockFreeSurfaceEulerParticlesLBM::computeNewParticleVelocityField(double* 
 		VP[ind] = (mass * (vp - up * gVx[ind] - vp * gVy[ind] - wp * gVz[ind]) + coef * VF[ind] + G[1] * (mass - volume)) / (mass + coef);
 		WP[ind] = (mass * (wp - up * gWx[ind] - vp * gWy[ind] - wp * gWz[ind]) + coef * WF[ind] + G[2] * (mass - volume)) / (mass + coef);
 
-		if (dist[ind] < 1) {
-			// next to a wall the particles do not move towards it faster than the fluid, along the wall they are free
-			const double* n = &gradDist[3 * ind];
-			double nn = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
-			double slip = (UP[ind] - UF[ind]) * n[0] + (VP[ind] - VF[ind]) * n[1] + (WP[ind] - WF[ind]) * n[2];
-			if (nn > 0 && slip < 0) {
-				UP[ind] -= slip * n[0] / nn;
-				VP[ind] -= slip * n[1] / nn;
-				WP[ind] -= slip * n[2] / nn;
-			}
-		}
+		wallSlipLimit(ind, dist, gradDist);
 
 		double c = max(concentration[ind], 0.0);
 		Gx[ind] = c * coef * (UP[ind] - UF[ind]);
 		Gy[ind] = c * coef * (VP[ind] - VF[ind]);
 		Gz[ind] = c * coef * (WP[ind] - WF[ind]);
 	}
+}
+
+// next to a wall the particles do not move towards it faster than the fluid, along the wall they are free
+void BlockFreeSurfaceEulerParticlesLBM::wallSlipLimit(int ind, const double* dist, const double* gradDist) {
+	if (dist[ind] >= 1) {
+		return;
+	}
+	const double* n = &gradDist[3 * ind];
+	double nn = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+	double slip = (UP[ind] - UF[ind]) * n[0] + (VP[ind] - VF[ind]) * n[1] + (WP[ind] - WF[ind]) * n[2];
+	if (nn > 0 && slip < 0) {
+		UP[ind] -= slip * n[0] / nn;
+		VP[ind] -= slip * n[1] / nn;
+		WP[ind] -= slip * n[2] / nn;
+	}
+}
+
+void BlockFreeSurfaceEulerParticlesLBM::prepareParticleStep() {
+	computeGradU();
+	interpolateFluidVelocity();
 }
 
 double BlockFreeSurfaceEulerParticlesLBM::cd(double uSlip) { // return Cd*uSlip

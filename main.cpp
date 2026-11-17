@@ -127,7 +127,7 @@ static int run(int argc, char** argv) {
 			if (mesh->isFreeSurface()) {
 				cout << ", mass = " << massTot;
 			}
-			if (problemID == 4) {
+			if (problemID == 4 || problemID == 42) {
 				cout << ", nP = " << mesh->nParticles << ", maxP = " << mesh->maxParticlesInCell;
 			}
 			cout << ", MLUPS = " << mlups;

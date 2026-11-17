@@ -22,6 +22,8 @@ set(CORE_SOURCES
 	BlockFreeSurfaceEulerParticlesFVM.cpp
 	BlockFreeSurfaceEulerNoSphereParticlesFVM.cpp
 	BlockFreeSurfaceEulerParticlesLBM.cpp
+	BlockFreeSurfaceEulerNoSphereParticlesLBM.cpp
+	SpheroidOrientation.cpp
 	LagrangeParticles.cpp
 	LagrangeNoSphereParticles.cpp
 	LagrangeFibers.cpp
@@ -63,7 +65,8 @@ if(LBM_BUILD_TESTS)
 		tests/test_refinement.cpp
 		tests/test_particles.cpp
 		tests/test_nosphere.cpp
-		tests/test_euler_nosphere.cpp)
+		tests/test_euler_nosphere.cpp
+		tests/test_euler_nosphere_lbm.cpp)
 	target_link_libraries(lbm_tests PRIVATE lbmcore ${LBM_STATIC_LINK})
 	add_test(NAME lbm_tests COMMAND lbm_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
@@ -75,5 +78,9 @@ if(LBM_BUILD_TESTS)
 	if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/particle_study/study.cpp)
 		add_executable(particle_study tools/particle_study/study.cpp tests/TestCase.cpp)
 		target_link_libraries(particle_study PRIVATE lbmcore ${LBM_STATIC_LINK})
+	endif()
+	if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/nosphere_study/study.cpp)
+		add_executable(nosphere_study tools/nosphere_study/study.cpp tests/TestCase.cpp)
+		target_link_libraries(nosphere_study PRIVATE lbmcore ${LBM_STATIC_LINK})
 	endif()
 endif()

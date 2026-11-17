@@ -1,6 +1,6 @@
 ---
 name: lbm4u-particles
-description: Explain, choose, set up and evaluate particle-laden free-surface flows in the cLBMnet / LBM4U solver - Lagrangian point particles (spheres problemID 2, rotating ellipsoids / non-spherical particles problemID 22), Eulerian concentration by finite volumes (problemID 3, FVM; spheroids with an orientation tensor problemID 33) and by LBM populations (problemID 4) - settling, suspensions, particle clouds, orientation and Jeffery rotation, two-way coupling, octree refinement, particles.txt and concentration files. Use it whenever the user asks about particles, sediment, fillers, flakes, short fibres, concentration or volume fraction in a simulation of this repository, compares the Lagrange and Euler approaches or wants the particle methods described - also in Czech ("částice", "partikly", "nekulové částice", "elipsoidy", "usazování", "sedimentace", "koncentrace", "popis metod"). Use with lbm4u-free-surface (case files, units, running) and, for non-Newtonian carriers, lbm4u-non-newtonian.
+description: Explain, choose, set up and evaluate particle-laden free-surface flows in the cLBMnet / LBM4U solver - Lagrangian point particles (spheres problemID 2, rotating ellipsoids / non-spherical particles problemID 22), Eulerian concentration by finite volumes (problemID 3, FVM; spheroids with an orientation tensor problemID 33) and by LBM populations (problemID 4; spheroids problemID 42) - settling, suspensions, particle clouds, orientation and Jeffery rotation, two-way coupling, octree refinement, particles.txt and concentration files. Use it whenever the user asks about particles, sediment, fillers, flakes, short fibres, concentration or volume fraction in a simulation of this repository, compares the Lagrange and Euler approaches or wants the particle methods described - also in Czech ("částice", "partikly", "nekulové částice", "elipsoidy", "usazování", "sedimentace", "koncentrace", "popis metod"). Use with lbm4u-free-surface (case files, units, running) and, for non-Newtonian carriers, lbm4u-non-newtonian.
 ---
 
 # Particles in free-surface flow (cLBMnet / LBM4U)
@@ -50,9 +50,9 @@ flakes, grains) when orientation-dependent drag (gliding, sideways drift) or ali
 * Output: `output_particles*.vtk` has `TENSORS shape` (ParaView: Tensor Glyph with a sphere source shows the
   ellipsoids), `axis1..3`, `angularVelocity`.
 
-## Eulerian spheroids (`problemID 33`)
+## Eulerian spheroids (`problemID 33` FVM, `42` LBM)
 
-The FVM model with an orientation per cell: c particles of one shape (spheroid, aspect ratio r) and their orientation
+The Euler models with an orientation per cell: c particles of one shape (spheroid, aspect ratio r) and their orientation
 tensor A = <p p> (trace 1; I/3 random, p p aligned). Use it instead of problemID 22 when there are too many particles
 to track, or when the orientation field (alignment by the flow, flow-induced anisotropy) is the result.
 
@@ -68,13 +68,18 @@ to track, or when the orientation field (alignment by the flow, flow-induced ani
   (largest eigenvalue, 1/3 random ... 1 aligned).
 * Limits: one velocity per cell (no dispersion from different orientations), one shape per run, closure error for
   partly aligned states, Jeffery (creeping flow) rotation, no particle stress in the liquid.
+* problemID 42 = the same with the LBM transport of problemID 4 (`particleDiffusivity` etc. as for 4). Every
+  population carries the orientation of the cell it comes from, so A is mixed with the particles (also by their
+  diffusion); r = 1 gives problemID 4. Choose 33 vs 42 as 3 vs 4: 42 smears the cloud and its orientation more.
+  The fluid fraction 1 - cV of the LBM model makes the liquid velocity vary through a cloud and the spheroids turn
+  slightly in that gradient (absent in 33).
 
 ## Physics common to all models
 
 * Drag: Schiller-Naumann `Cd = 24/Re (1 + 0.15 Re^0.687)`, `Re = d |u − v| / ν`, velocity updated implicitly
   (stable for any particle response time).
 * Gravity with buoyancy `(m − ρ V) g`. `gravityRotationOmega` rotates (gx, gy) about z (rotating moulds,
-  problemID 2 and 4). `fluidGravity = 0` puts gravity on particles only - right for a closed box completely full of
+  problemID 2, 4 and 42). `fluidGravity = 0` puts gravity on particles only - right for a closed box completely full of
   liquid (the hydrostatic pressure only compresses the lattice), wrong whenever there is a free surface.
 * Two-way coupling: the reaction of the drag is spread to the liquid (force `F · vof / ρ`, conservative kernel).
   Lagrange `couplingWayNumber = 4` additionally uses the fluid volume fraction 1 − φ in the liquid equations.
@@ -95,7 +100,7 @@ to track, or when the orientation field (alignment by the flow, flow-induced ani
    * `make_case.py` writes both (`"particles"` and `"concentration"` keys with a sphere, box or expression region).
 3. `particleDiffusivity` for LBM: the smallest stable value is about `0.005 · h · Cu` (cell Péclet ~10); the
    diffusion length `sqrt(2 D T)` should be small compared with the cloud - report it to the user.
-4. Check the run before a long computation: the console shows the particle count (`nP`, `maxP` for problemID 4,
+4. Check the run before a long computation: the console shows the particle count (`nP`, `maxP` for problemID 4 and 42,
    statistics for problemID 2). A changing count means particles leave through an inlet/outlet or a setup error.
 
 ## Refined meshes
@@ -122,5 +127,5 @@ repulsion (Lagrange) is not evaluated across the level interface - keep dense pa
   volume fractions.
 * Fibres (`problemID 21`) are a separate, unreviewed model without refinement support.
 
-Unit tests: `lbm_tests.exe lagrange`, `lbm_tests.exe euler` (includes `euler_nosphere`), `lbm_tests.exe nosphere`, `lbm_tests.exe refinement_` (settling velocity,
+Unit tests: `lbm_tests.exe lagrange`, `lbm_tests.exe euler` (includes `euler_nosphere` and `euler_nosphere_lbm`), `lbm_tests.exe nosphere`, `lbm_tests.exe refinement_` (settling velocity,
 momentum, conservation, wall contact) - `tests/test_particles.cpp` is also the best source of small example setups.

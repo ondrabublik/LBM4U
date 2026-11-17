@@ -52,26 +52,29 @@ public:
 	void cellForce(int ind, double* acc, double& epsF);
 	void equilibriumScalar(double* geq, double c, double Up, double Vp, double Wp);
 	void computeInitDistributionScalar();
-	void readInitConcentration(int id, string simulPath);
+	virtual void readInitConcentration(int id, string simulPath);
 	void calculConcentration();
 	void collisionScalar();
 	void propagationScalar();
-	void propagateScalarCell(int ind);
+	virtual void propagateScalarCell(int ind);
 	// streaming of the listed cells only (ghost layers of a refined mesh)
 	void propagateScalarCells(const vector<int>& cells);
-	void applyExchangeCorr();
+	// adds exchangeCorr to the populations (refined mesh), after the propagation of the scalar
+	virtual void applyExchangeCorr();
 	// ghost cells: the populations hold numbers of particles, so they are divided (summed) by 8
 	void prolongCell(int ind, const Block* src, int sInd);
 	void restrictCell(int ind, Block* const* src, const int* sInd);
 	// the particles follow the liquid: cells that lost the liquid release their particles (returns true if any),
 	// the liquid cells around collect them in a separate pass
-	bool releaseDryCells();
-	void collectReleased();
+	virtual bool releaseDryCells();
+	virtual void collectReleased();
 	void computeGradP();
 	void computeGradU();
 	void computeGradC();
 	void computeGradVOFp();
-	void computeNewParticleVelocityField(double* distance, double* gradDistance);
+	// gradient of the particle velocity and the fluid velocity seen by the particles (before the particle velocity)
+	virtual void prepareParticleStep();
+	virtual void computeNewParticleVelocityField(double* distance, double* gradDistance);
 	double cd(double Uslip);
 	void interpolateFluidVelocity();
 	void normalizeForce();
@@ -79,6 +82,10 @@ public:
 	void setTau();
 	double computeTau(double cFor, double cMid, double cBack);
 	double limitFraction(double x);
+
+protected:
+	// next to a wall the particles do not move towards it faster than the fluid
+	void wallSlipLimit(int ind, const double* dist, const double* gradDist);
 
 private:
 	void fieldGradient(const double* (*field)(Block*), double scale, bool liquidOnly, double* outX, double* outY, double* outZ);
