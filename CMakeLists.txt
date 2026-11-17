@@ -20,6 +20,7 @@ set(CORE_SOURCES
 	BlockFreeSurfaceLagrangeNoSphereParticles.cpp
 	BlockFreeSurfaceLagrangeFibers.cpp
 	BlockFreeSurfaceEulerParticlesFVM.cpp
+	BlockFreeSurfaceEulerNoSphereParticlesFVM.cpp
 	BlockFreeSurfaceEulerParticlesLBM.cpp
 	LagrangeParticles.cpp
 	LagrangeNoSphereParticles.cpp
@@ -61,7 +62,8 @@ if(LBM_BUILD_TESTS)
 		tests/test_free_surface.cpp
 		tests/test_refinement.cpp
 		tests/test_particles.cpp
-		tests/test_nosphere.cpp)
+		tests/test_nosphere.cpp
+		tests/test_euler_nosphere.cpp)
 	target_link_libraries(lbm_tests PRIVATE lbmcore ${LBM_STATIC_LINK})
 	add_test(NAME lbm_tests COMMAND lbm_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 

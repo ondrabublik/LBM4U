@@ -152,6 +152,9 @@ public:
 			}
 		});
 	}
+	// velocity gradient du_a/dx_b of the liquid cells, out[9 * ind + 3 * a + b] (lattice units of the level),
+	// zero in the other cells; walls are mirrored, the free surface and outlets repeat the cell value
+	void velocityGradient(double* out);
 	// lower limit of liquidKernelSum (an almost empty isolated cell must not get a huge acceleration)
 	static constexpr double FORCE_KERNEL_MIN = 0.1;
 	// part of the kernel that falls to the liquid, weighted by the fill level: a force spread with

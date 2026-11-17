@@ -41,11 +41,13 @@ public:
 
 	~BlockFreeSurfaceEulerParticlesFVM();
 
-	void readInitConcentration(int id, string simulPath);
+	virtual void readInitConcentration(int id, string simulPath);
 	void collision();
 	void cellForce(int ind, double* acc, double& epsF);
 	void computeGradP();
-	void computeNewParticleVelocityField();
+	// fields of the liquid the particle step needs (gradP, fluid velocity, particle pressure)
+	virtual void prepareParticleStep();
+	virtual void computeNewParticleVelocityField();
 	double cd(double Uslip);
 	void interpolateFluidVelocity();
 	void normalizeForce();
@@ -55,16 +57,24 @@ public:
 	double faceFlux(int ind, int p);
 	double upwindFlux(int ind, int p, BlockFreeSurfaceEulerParticlesFVM* bs, int loc, double Un);
 	void computeFlux();
-	void applyFlux();
+	virtual void applyFlux();
+	// refined mesh: moves what the ghost cell ind collected to the coarser cell dloc of dst (Mesh::forwardFluxFVM)
+	virtual void forwardExchange(int ind, BlockFreeSurfaceEulerParticlesFVM* dst, int dloc);
 	// the particles follow the liquid: cells that lost the liquid release their particles (returns true if any),
 	// the liquid cells around collect them in a separate pass
-	bool releaseDryCells();
-	void collectReleased();
+	virtual bool releaseDryCells();
+	virtual void collectReleased();
 	void computeParticlePressure();
 	// ghost cells: the concentration is the number of particles in the cell, so it is divided (summed) by 8
 	void prolongCell(int ind, const Block* src, int sInd);
 	void restrictCell(int ind, Block* const* src, const int* sInd);
 	void computeParticlePressureGradient();
+
+protected:
+	// quantities carried with the particles (problemID 33): computeFlux calls faceTransport for every non-zero
+	// flux fl leaving the cell ind to the cell loc of nb; toCoarser marks a face to a ghost of the coarser level
+	bool extraTransport = false;
+	virtual void faceTransport(int ind, double fl, BlockFreeSurfaceEulerParticlesFVM* nb, int loc, bool toCoarser) {}
 
 private:
 	void liquidGradient(const double* (*field)(Block*), double scale, double* outX, double* outY, double* outZ);

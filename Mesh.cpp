@@ -177,7 +177,7 @@ Mesh::~Mesh() {
 }
 
 bool Mesh::isFreeSurface() const {
-	return problemID == 1 || problemID == 2 || problemID == 21 || problemID == 22 || problemID == 3 || problemID == 4;
+	return problemID == 1 || problemID == 2 || problemID == 21 || problemID == 22 || problemID == 3 || problemID == 33 || problemID == 4;
 }
 
 void Mesh::initIndexes() {
@@ -247,7 +247,7 @@ void Mesh::initBlocks() {
 	// wall distance
 	generateDistanceFunction();
 
-	if (problemID == 3) {
+	if (isEulerFVM()) {
 		for (int i = 0; i < nBlock; i++) {
 			int indBlock = blockId[i];
 			((BlockFreeSurfaceEulerParticlesFVM*)blocks[indBlock])->readInitConcentration(indBlock, simulPath);
@@ -392,12 +392,7 @@ void Mesh::evalBlocks(int iter, int step) {
 		if (any) {
 			forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesFVM*)b)->collectReleased(); }, false);
 		}
-		forBlocks([](Block* b) {
-			BlockFreeSurfaceEulerParticlesFVM* e = (BlockFreeSurfaceEulerParticlesFVM*)b;
-			e->computeGradP();
-			e->interpolateFluidVelocity();
-			e->computeParticlePressure();
-		});
+		forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesFVM*)b)->prepareParticleStep(); });
 		forBlocks([](Block* b) { ((BlockFreeSurfaceEulerParticlesFVM*)b)->computeParticlePressureGradient(); });
 		break;
 	}
@@ -542,6 +537,7 @@ void Mesh::advanceLevel(int level, int iterLevel) {
 	case 2:
 	case 22:
 	case 3:
+	case 33:
 	case 4:
 		advanceFreeSurfaceLevel(level, iterLevel);
 		break;
@@ -552,7 +548,7 @@ void Mesh::advanceLevel(int level, int iterLevel) {
 void Mesh::eulerLevelStep(int level, int iterLevel) {
 	typedef BlockFreeSurfaceEulerParticlesFVM FVM;
 	typedef BlockFreeSurfaceEulerParticlesLBM LBM;
-	if (problemID == 3) {
+	if (isEulerFVM()) {
 		evalBlocks(iterLevel, 30); // particles of emptied cells, gradP, fluid velocity
 		evalBlocks(iterLevel, 31); // particle velocity, force
 		forBlocks([](Block* b) {
@@ -595,14 +591,7 @@ void Mesh::forwardFluxFVM(int level) {
 	forGhosts(level, GHOST_FROM_COARSER, [this](GhostBlock& g) {
 		FVM* b = (FVM*)blocks[g.slot];
 		for (int ind : g.near1) {
-			double n = b->exchangeCorr[ind];
-			if (n == 0) {
-				continue;
-			}
-			b->exchangeCorr[ind] = 0;
-			double* acc = &((FVM*)blocks[g.srcBlock[ind]])->exchangeCorr[g.srcLocal[ind]];
-#pragma omp atomic
-			*acc += n;
+			b->forwardExchange(ind, (FVM*)blocks[g.srcBlock[ind]], g.srcLocal[ind]);
 		}
 	}, true);
 }
@@ -754,7 +743,7 @@ void Mesh::advanceFreeSurfaceLevel(int level, int iterLevel) {
 		accountInterface(level);
 	}
 	applyMassCorr(level);
-	if (problemID == 3 || problemID == 4) {
+	if (isEulerFVM() || problemID == 4) {
 		eulerLevelStep(level, iterLevel);
 	}
 
@@ -848,6 +837,7 @@ void Mesh::timeStep(int iter) {
 		evalBlocks(iter, 11);
 		break;
 	case 3: // free surface LBM with euler particles - solve transport eq. using FVM
+	case 33: // the same for non-spherical particles
 		evalBlocks(iter, 2);  // mass exchange, find filled/emptied cells
 		evalBlocks(iter, 3);
 		evalBlocks(iter, 4);
@@ -1005,6 +995,8 @@ Block* Mesh::createBlock(int indBlock, int level, bool isFirst, const ParamMap& 
 		return new BlockFreeSurfaceLagrangeFibers(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 	case 3:
 		return new BlockFreeSurfaceEulerParticlesFVM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
+	case 33:
+		return new BlockFreeSurfaceEulerNoSphereParticlesFVM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 	case 4:
 		return new BlockFreeSurfaceEulerParticlesLBM(isFirst, blocks, nBlock, nBlockMax, blockMap, nBi, nBj, nBk, indBlock, level, indAll, indIn, indBound, collisionModel, viscosityModel, nf, ex, ey, ez, w, opp, ni, nj, nk, par);
 	default:
@@ -1051,8 +1043,8 @@ int Mesh::loadStructure(string geomPath) {
 		if (ni % 2 || nj % 2 || nk % 2) {
 			throw invalid_argument("grid refinement requires even block dimensions ni, nj, nk");
 		}
-		if (problemID != 0 && problemID != 1 && problemID != 2 && problemID != 22 && problemID != 3 && problemID != 4) {
-			throw invalid_argument("grid refinement is available for problemID 0, 1, 2, 22, 3 and 4 only");
+		if (problemID != 0 && problemID != 1 && problemID != 2 && problemID != 22 && !isEulerFVM() && problemID != 4) {
+			throw invalid_argument("grid refinement is available for problemID 0, 1, 2, 22, 3, 33 and 4 only");
 		}
 	}
 	if (nk == 1 && nBk == 1) {
@@ -1930,7 +1922,7 @@ void Mesh::writeResultsToVTK(int iter) {
 		scalar("particle_volume_fraction", [](Block* b, int ind) { return ((BlockFreeSurfaceLagrangeParticles*)b)->particleFraction[ind]; });
 	}
 
-	if (problemID == 3) {
+	if (isEulerFVM()) {
 		typedef BlockFreeSurfaceEulerParticlesFVM E;
 		scalar("concentration", [](Block* b, int ind) { return ((E*)b)->concentration[ind]; });
 		scalar("particle_pressure", [](Block* b, int ind) { return ((E*)b)->PP[ind]; });
@@ -1943,6 +1935,32 @@ void Mesh::writeResultsToVTK(int iter) {
 			a[0] = b->Cu * ((E*)b)->UP[ind];
 			a[1] = b->Cu * ((E*)b)->VP[ind];
 			a[2] = b->Cu * ((E*)b)->WP[ind];
+		});
+	}
+
+	if (problemID == 33) {
+		typedef BlockFreeSurfaceEulerNoSphereParticlesFVM E;
+		vector<float> t;
+		t.reserve(9 * nc);
+		forCells(blocks, blockId, nBlock, false, [&](Block* b, int ind) {
+			const double* A = &((E*)b)->orient[6 * ind];
+			const double full[9] = { A[0], A[3], A[4], A[3], A[1], A[5], A[4], A[5], A[2] };
+			for (int k = 0; k < 9; k++) {
+				t.push_back((float)full[k]);
+			}
+		});
+		vtk.add("CellData", "orientation_tensor", t, 9);
+		vector3("orientation_direction", [](Block* b, int ind, double* a) {
+			double val[3], vec[9];
+			E::eigenSym(&((E*)b)->orient[6 * ind], val, vec);
+			a[0] = vec[0];
+			a[1] = vec[3];
+			a[2] = vec[6];
+		});
+		scalar("orientation_alignment", [](Block* b, int ind) {
+			double val[3], vec[9];
+			E::eigenSym(&((E*)b)->orient[6 * ind], val, vec);
+			return val[0];
 		});
 	}
 

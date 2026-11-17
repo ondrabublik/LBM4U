@@ -9,7 +9,7 @@ build.bat            # Visual Studio 2022 (MSVC, OpenMP /openmp:llvm)
 build.bat mingw      # MSYS2 g++ + Ninja, statically linked exe
 ```
 
-CMake builds `cLBMnet.exe` (the solver) and `lbm_tests.exe` (59 unit tests, run them in the build folder, optionally with a name filter).
+CMake builds `cLBMnet.exe` (the solver) and `lbm_tests.exe` (68 unit tests, run them in the build folder, optionally with a name filter).
 
 Graphical interface: `gui/build_gui.bat` → `gui/bin/LBMStudio.exe`, described in [gui/README.md](gui/README.md).
 
@@ -160,6 +160,19 @@ Rigid ellipsoids as Lagrangian point particles (`LagrangeNoSphereParticles`, blo
 * Not modelled: inertial (finite Re) torque and lift, the torque of the particle on the liquid (only the force is coupled), contact torques at walls. The point-particle limits of `problemID` 2 hold, the largest semi-axis should be below the cell size.
 * Gravity rotation (`gravityRotationOmega`) now works for the Lagrangian particles also on refined meshes (step 202 was missing there).
 * Tests `nosphere_*` (`tests/test_nosphere.cpp`): resistance against the closed forms for a sphere and a prolate spheroid (Chwang & Wu) and against quadrature (1e-14), Jeffery period of a 3:1 spheroid (1e-5), the sphere limit identical to `problemID` 2 (difference 0), glide of a settling spheroid inclined by 45° (slip 0.06 % and 0.003° from the theory), rotation in a Couette flow (uniform mesh: 0.02 % from Jeffery; refined: the particle follows Jeffery with the interpolated gradient to 1e-4, the gradient itself is disturbed by ~1.5 % at the level interface), contact of an ellipsoid lying on a wall.
+
+### Eulerian non-spherical particles (`problemID` 33)
+
+Spheroids (rotationally symmetric ellipsoids) in the Eulerian FVM model (`BlockFreeSurfaceEulerNoSphereParticlesFVM`, derived from the block of `problemID` 3). A cell holds the number of particles `c` and the orientation tensor `A = <p p>` of their symmetry axes (trace 1; `I/3` random, `p p` aligned).
+
+* Parameters: `particleDiameter` (volume-equivalent sphere), `particleDensity`, `particleAspectRatio` r = a/b (> 1 prolate, < 1 oblate, default 1), `orientationDiffusion` C_I (default 0), `orientationClosure` (0 hybrid, default; 1 quadratic). Optional `init/orientation<tag>.txt`: `A11 A22 A33 A12 A13 A23` per cell, default `I/3`. `make_case.py` writes it from `"orientation"` in `"concentration"` (`"random"`, an axis or a tensor).
+* Drag: the mobility of a spheroid is linear in `p p`, so its average over the orientations of a cell is exact, `<M> = I/KT⊥ + (1/KT∥ − 1/KT⊥) A` (resistances of `LagrangeNoSphereParticles::resistance`). The particle velocity solves the implicit 3 × 3 system with `K = <M>⁻¹ μ g(Re)`, the liquid gets `c K (v − u)`. r = 1 gives `problemID` 3 to round-off.
+* Orientation: `c A` is carried with the same limited flux as `c`; the flux of `c A` through a face is the flux of `c` times `A` of the upwind cell, so `A` stays a weighted mean of tensors (trace 1, positive semidefinite) and a uniform `A` stays uniform. Then the Folgar–Tucker equation `dA/dt = W A − A W + λ (D A + A D − 2 A4:D) + 2 C_I γ̇ (I − 3A)` is integrated in every liquid cell (RK4, sub-steps for large gradients) with the velocity gradient of the liquid; `A4` from the hybrid closure (exact for aligned and for random particles) or the quadratic one. The tensor is renormalised to trace 1 and negative eigenvalues are cut.
+* Refined meshes: `c A` crosses the level interface with the concentration (`exchangeOrient`, forwarded by `forwardExchange`), ghost cells copy `A`, a coarse ghost gets the concentration-weighted mean of its 8 cells. Free surface: a cell that loses the liquid hands `c A` to its liquid neighbours with the particles.
+* Output `output_*.vtu`: `orientation_tensor` (9 components, Tensor Glyph in ParaView), `orientation_direction` (main axis, eigenvector of the largest eigenvalue), `orientation_alignment` (largest eigenvalue, 1/3 random … 1 aligned).
+* Code: the velocity gradient moved to `BlockFreeSurface::velocityGradient` (shared with `problemID` 22). The FVM block got virtual hooks (`prepareParticleStep`, `faceTransport`, `forwardExchange`, the velocity, flux, release and ghost methods), `Mesh::isEulerFVM()` selects both FVM models. `problemID` 3 is unchanged.
+* Not modelled: one velocity per cell (particles of different orientation move differently in reality, the resulting dispersion is missing), one size and shape per run, only spheroids, creeping-flow (Jeffery) rotation, no stress of the particles in the liquid (fibre suspension viscosity). An LBM variant (`problemID` 44) was not made.
+* Tests `euler_nosphere_*` (`tests/test_euler_nosphere.cpp`): drag tensor against Chwang & Wu (1e-12); Folgar–Tucker rate against the Jeffery equation for aligned particles and against the exact closure for random ones (1e-16); sphere limit equal to `problemID` 3 (2e-15); settling of random spheroids r = 3 with the averaged mobility (1.1 %); aligned spheroids inclined by 45° glide with the slip of one particle (0.14 %, 0.05°); Jeffery orbit of the orientation tensor in a Couette flow (6e-14) and rotary diffusion (1e-12) against the analytic solutions; a uniform `A` kept exactly by the transport of a non-uniform cloud; conservation with the free surface (1e-15) and across the level interface (1.5e-14).
 
 ## Not done
 

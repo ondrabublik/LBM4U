@@ -15,6 +15,7 @@ Files: `LagrangeParticles.cpp`, `BlockFreeSurfaceLagrangeParticles.cpp` (problem
 5. Euler LBM
 6. Refinement and free surface
 7. Non-spherical particles (problemID 22)
+8. Eulerian spheroids (problemID 33)
 
 ## 1. Drag and the equation of motion
 
@@ -134,3 +135,27 @@ For small particles the relaxation time `I/(μ KR)` is far below Δt and ω = ω
 Velocity gradient per liquid cell: `∂u_a/∂x_b = 3 Σ_i w_i e_ib u_a(x + e_i)`; behind a wall the mirror value
 `2 u_wall − u`, behind gas or an outlet the cell value. Interpolated with the velocity kernel (scaled by 2^L to cells of
 level 0 on refined meshes). Wall contact uses the support function `sqrt(nᵀ R diag(a²) Rᵀ n)`.
+
+## 8. Eulerian spheroids (problemID 33)
+
+Per cell: c (number of particles) and A = <p p> (p the symmetry axis, trace A = 1). Semi-axes a = r b along p,
+b across, with a b² = (d/2)³.
+
+```
+<M> = I / KT_perp + (1/KT_par - 1/KT_perp) A          (exact average of the Stokes mobility of a spheroid)
+(m I + K) v_new = m v + K u + (m - ρV) g,   K = <M>^-1 μ g(Re)       force on the liquid c K (v - u)
+```
+
+Transport of q = c A with the flux of c (limited upwind/Lax-Wendroff): flux_q = flux_c · A_upwind; then
+A = q / trace(q). Orientation (Folgar-Tucker), RK4 in each liquid cell, L = ∇u, D, W its symmetric and antisymmetric
+parts, γ̇ = sqrt(2 D:D), λ = (r² - 1)/(r² + 1):
+
+```
+dA/dt = W A - A W + λ (D A + A D - 2 A4:D) + 2 C_I γ̇ (I - 3A)
+A4:D quadratic = A (A:D);  linear = -(δ trD + 2D)/35 + (A trD + 2(AD + DA) + δ A:D)/7
+hybrid = f quadratic + (1 - f) linear,  f = 1 - 27 det A
+```
+
+The hybrid closure is exact for aligned (f = 1) and random (f = 0) particles. After each step A is renormalised to trace
+1 and negative eigenvalues are cut. Refinement: q is exchanged with c at the level interface (exchangeOrient), coarse
+ghosts get the c-weighted mean of A.

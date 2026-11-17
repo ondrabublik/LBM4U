@@ -1,6 +1,6 @@
 ---
 name: lbm4u-particles
-description: Explain, choose, set up and evaluate particle-laden free-surface flows in the cLBMnet / LBM4U solver - Lagrangian point particles (spheres problemID 2, rotating ellipsoids / non-spherical particles problemID 22), Eulerian concentration by finite volumes (problemID 3, FVM) and by LBM populations (problemID 4) - settling, suspensions, particle clouds, orientation and Jeffery rotation, two-way coupling, octree refinement, particles.txt and concentration files. Use it whenever the user asks about particles, sediment, fillers, flakes, short fibres, concentration or volume fraction in a simulation of this repository, compares the Lagrange and Euler approaches or wants the particle methods described - also in Czech ("částice", "partikly", "nekulové částice", "elipsoidy", "usazování", "sedimentace", "koncentrace", "popis metod"). Use with lbm4u-free-surface (case files, units, running) and, for non-Newtonian carriers, lbm4u-non-newtonian.
+description: Explain, choose, set up and evaluate particle-laden free-surface flows in the cLBMnet / LBM4U solver - Lagrangian point particles (spheres problemID 2, rotating ellipsoids / non-spherical particles problemID 22), Eulerian concentration by finite volumes (problemID 3, FVM; spheroids with an orientation tensor problemID 33) and by LBM populations (problemID 4) - settling, suspensions, particle clouds, orientation and Jeffery rotation, two-way coupling, octree refinement, particles.txt and concentration files. Use it whenever the user asks about particles, sediment, fillers, flakes, short fibres, concentration or volume fraction in a simulation of this repository, compares the Lagrange and Euler approaches or wants the particle methods described - also in Czech ("částice", "partikly", "nekulové částice", "elipsoidy", "usazování", "sedimentace", "koncentrace", "popis metod"). Use with lbm4u-free-surface (case files, units, running) and, for non-Newtonian carriers, lbm4u-non-newtonian.
 ---
 
 # Particles in free-surface flow (cLBMnet / LBM4U)
@@ -49,6 +49,25 @@ flakes, grains) when orientation-dependent drag (gliding, sideways drift) or ali
 * Keep the **largest** semi-axis below the cell size (point-particle limit). Longer fibres need another model.
 * Output: `output_particles*.vtk` has `TENSORS shape` (ParaView: Tensor Glyph with a sphere source shows the
   ellipsoids), `axis1..3`, `angularVelocity`.
+
+## Eulerian spheroids (`problemID 33`)
+
+The FVM model with an orientation per cell: c particles of one shape (spheroid, aspect ratio r) and their orientation
+tensor A = <p p> (trace 1; I/3 random, p p aligned). Use it instead of problemID 22 when there are too many particles
+to track, or when the orientation field (alignment by the flow, flow-induced anisotropy) is the result.
+
+* Parameters: `particleDiameter` (volume-equivalent), `particleDensity`, `particleAspectRatio`, `orientationDiffusion`
+  C_I (0 for dilute, ~0.001-0.01 for interacting fibres), `orientationClosure` (0 hybrid, default). Initial A:
+  `init/orientation<tag>.txt` (`A11 A22 A33 A12 A13 A23` per cell), default random; `make_case.py`:
+  `"concentration": {..., "orientation": "random" | [px, py, pz] | [A11, ..., A23]}`.
+* Drag: mobility averaged over the orientations (exact for Stokes drag): random prolate r = 3 settles ~10 % slower
+  than the volume-equivalent sphere; aligned inclined particles glide sideways as one particle of problemID 22.
+* Orientation: Folgar-Tucker equation (Jeffery rotation + rotary diffusion) with the liquid velocity gradient,
+  transported with the particle flux.
+* Output: `orientation_tensor` (9 components), `orientation_direction` (main axis), `orientation_alignment`
+  (largest eigenvalue, 1/3 random ... 1 aligned).
+* Limits: one velocity per cell (no dispersion from different orientations), one shape per run, closure error for
+  partly aligned states, Jeffery (creeping flow) rotation, no particle stress in the liquid.
 
 ## Physics common to all models
 
@@ -103,5 +122,5 @@ repulsion (Lagrange) is not evaluated across the level interface - keep dense pa
   volume fractions.
 * Fibres (`problemID 21`) are a separate, unreviewed model without refinement support.
 
-Unit tests: `lbm_tests.exe lagrange`, `lbm_tests.exe euler`, `lbm_tests.exe refinement_` (settling velocity,
+Unit tests: `lbm_tests.exe lagrange`, `lbm_tests.exe euler` (includes `euler_nosphere`), `lbm_tests.exe nosphere`, `lbm_tests.exe refinement_` (settling velocity,
 momentum, conservation, wall contact) - `tests/test_particles.cpp` is also the best source of small example setups.

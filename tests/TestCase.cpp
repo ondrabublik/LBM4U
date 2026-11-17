@@ -105,6 +105,16 @@ unique_ptr<Mesh> buildMesh(const CaseSpec& spec) {
 						for (int k = 0; k < spec.nk; k++)
 							f << spec.concentrationL(l, g0 + i, g1 + j, g2 + k) << "\n";
 			}
+			if (spec.orientationL) {
+				ofstream f(sim + "init/orientation" + tag + ".txt");
+				f.precision(17);
+				for (int i = 0; i < spec.ni; i++)
+					for (int j = 0; j < spec.nj; j++)
+						for (int k = 0; k < spec.nk; k++) {
+							array<double, 6> a = spec.orientationL(l, g0 + i, g1 + j, g2 + k);
+							f << a[0] << " " << a[1] << " " << a[2] << " " << a[3] << " " << a[4] << " " << a[5] << "\n";
+						}
+			}
 		}
 	}
 	for (int bk = 0; bk < spec.nBk && spec.octree.empty(); bk++) {
@@ -137,6 +147,16 @@ unique_ptr<Mesh> buildMesh(const CaseSpec& spec) {
 						for (int j = 0; j < spec.nj; j++)
 							for (int k = 0; k < spec.nk; k++)
 								f << spec.concentration(bi * spec.ni + i, bj * spec.nj + j, bk * spec.nk + k) << "\n";
+				}
+				if (spec.orientation) {
+					ofstream f(sim + "init/orientation" + to_string(id) + ".txt");
+					f.precision(17);
+					for (int i = 0; i < spec.ni; i++)
+						for (int j = 0; j < spec.nj; j++)
+							for (int k = 0; k < spec.nk; k++) {
+								array<double, 6> a = spec.orientation(bi * spec.ni + i, bj * spec.nj + j, bk * spec.nk + k);
+								f << a[0] << " " << a[1] << " " << a[2] << " " << a[3] << " " << a[4] << " " << a[5] << "\n";
+							}
 				}
 			}
 		}

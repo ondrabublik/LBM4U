@@ -35,6 +35,8 @@ struct CaseSpec {
 	std::vector<std::vector<double> > particleRows;
 	// Eulerian particles (problemID 3, 4): number of particles in a global cell -> init/concentration<id>.txt
 	std::function<double(int, int, int)> concentration;
+	// orientation tensor of a global cell (problemID 33): A11 A22 A33 A12 A13 A23 -> init/orientation<id>.txt
+	std::function<std::array<double, 6>(int, int, int)> orientation;
 
 	// refined mesh: blocks (bi, bj, bk, level) replace the nBi x nBj x nBk grid, the functions below
 	// take the level and the global cell indexes of the level and replace cellType and flag
@@ -45,6 +47,7 @@ struct CaseSpec {
 	std::function<std::array<double, 4>(int, int, int, int)> initL;
 	// number of particles in a cell of the level (Eulerian particles on a refined mesh)
 	std::function<double(int, int, int, int)> concentrationL;
+	std::function<std::array<double, 6>(int, int, int, int)> orientationL;
 };
 
 // leaves of an octree over nBi x nBj x nBk blocks, refine(level, bi, bj, bk) splits a block

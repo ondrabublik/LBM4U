@@ -25,6 +25,7 @@
 #include "BlockFreeSurfaceLagrangeNoSphereParticles.h"
 #include "BlockFreeSurfaceLagrangeFibers.h"
 #include "BlockFreeSurfaceEulerParticlesFVM.h"
+#include "BlockFreeSurfaceEulerNoSphereParticlesFVM.h"
 #include "BlockFreeSurfaceEulerParticlesLBM.h"
 #include "LagrangeParticles.h"
 #include "LagrangeNoSphereParticles.h"
@@ -98,6 +99,7 @@ public:
 	bool isFreeSurface() const;
 	// Lagrangian particles: spheres (problemID 2) or ellipsoids (22)
 	bool isLagrangeParticles() const { return problemID == 2 || problemID == 22; }
+	bool isEulerFVM() const { return problemID == 3 || problemID == 33; }
 	void model(int model, int** ex, int** ey, int** ez, double** w, int** opp);
 	int loadStructure(string geomPath);
 	void initIndexes();

@@ -7,7 +7,7 @@ with *. Source of truth: `getPar*` calls in `Block.cpp`, `Mesh.cpp`, `BlockFreeS
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `problemID`* | | 0 single phase, 1 free surface, 2 Lagrangian particles, 22 Lagrangian ellipsoids (rotating), 3 Euler FVM particles, 4 Euler LBM particles, 21 Lagrangian fibers |
+| `problemID`* | | 0 single phase, 1 free surface, 2 Lagrangian particles, 22 Lagrangian ellipsoids (rotating), 3 Euler FVM particles, 33 Euler FVM spheroids with orientation, 4 Euler LBM particles, 21 Lagrangian fibers |
 | `model`* | | 319 D3Q19, 315 D3Q15, 29 D2Q9 (requires `nk = 1`, no refinement) |
 | `ni`*, `nj`*, `nk`* | | cells per block |
 | `H`* | | edge of a level-0 block [m]; cell size `h = H / ni` |
@@ -64,7 +64,10 @@ with *. Source of truth: `getPar*` calls in `Block.cpp`, `Mesh.cpp`, `BlockFreeS
 | `couplingWayNumber` | 2 | 2 | 4: the fluid equations use the fluid volume fraction 1 − φ |
 | `particleRestitution` | 1 | 2 | restitution of the wall-normal velocity (0-1) |
 | `cLES` | 0 | 2 | extra viscosity proportional to concentration × shear rate |
-| `particleDiameter`*, `particleDensity`* | | 3, 4 | d [m], ρp [kg/m³] |
+| `particleDiameter`*, `particleDensity`* | | 3, 33, 4 | d [m] (33: volume-equivalent sphere), ρp [kg/m³] |
+| `particleAspectRatio` | 1 | 33 | r = a / b of the spheroids (> 1 prolate, < 1 oblate) |
+| `orientationDiffusion` | 0 | 33 | Folgar-Tucker rotary diffusion C_I (fibre suspensions ~0.001-0.01) |
+| `orientationClosure` | 0 | 33 | 0 hybrid, 1 quadratic closure of the orientation equation |
 | `particleDiffusivity`* | | 4 | diffusivity of the concentration [m²/s] |
 | `overpackDiffusivity` | 0 | 4 | extra diffusion above the packing limit (lattice units) |
 | `particleInterForces` | 0 | 4 | read, not used |
@@ -79,5 +82,6 @@ with *. Source of truth: `getPar*` calls in `Block.cpp`, `Mesh.cpp`, `BlockFreeS
 
 Fields in `output_*.vtu`: velocity, relative_pressure, VOF, FLAGMAP (1 liquid, 2 gas, 3 interface), curvature,
 surfaceLevel, with a non-Newtonian liquid also shearRate and viscosity, with particles concentration and
-model-specific fields. `output_particles<time>us.vtk`: Lagrangian particle positions in cells of level 0 (problemID 22 also the shape tensor,
+model-specific fields. problemID 33 adds orientation_tensor, orientation_direction and orientation_alignment.
+`output_particles<time>us.vtk`: Lagrangian particle positions in cells of level 0 (problemID 22 also the shape tensor,
 body axes and angular velocity).

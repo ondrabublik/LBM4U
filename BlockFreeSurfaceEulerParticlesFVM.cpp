@@ -190,14 +190,19 @@ void BlockFreeSurfaceEulerParticlesFVM::computeFlux() {
 		for (int p = 0; p < 6; p++) {
 			double fl = faceFlux(ind, p);
 			fluxConcentration[ind] += fl;
-			if (fl != 0 && nbIndex[ind] >= 0) {
+			if (fl != 0 && (nbIndex[ind] >= 0 || extraTransport)) {
 				int bl, loc;
 				local2globalShift(indBlock, ind, bl, loc, exLW[p], eyLW[p], ezLW[p]);
-				if (blocks[bl]->ghost == GHOST_FROM_COARSER) {
+				BlockFreeSurfaceEulerParticlesFVM* nb = (BlockFreeSurfaceEulerParticlesFVM*)blocks[bl];
+				bool toCoarser = nbIndex[ind] >= 0 && nb->ghost == GHOST_FROM_COARSER;
+				if (toCoarser) {
 					// particles sent to (taken from) the coarser level, Mesh::forwardFluxFVM gives them to the coarser cell
-					double* acc = &((BlockFreeSurfaceEulerParticlesFVM*)blocks[bl])->exchangeCorr[loc];
+					double* acc = &nb->exchangeCorr[loc];
 #pragma omp atomic
 					*acc += fl;
+				}
+				if (extraTransport) {
+					faceTransport(ind, fl, nb, loc, toCoarser);
 				}
 			}
 		}
@@ -210,6 +215,17 @@ void BlockFreeSurfaceEulerParticlesFVM::applyFlux() {
 		concentration[ind] += exchangeCorr[ind] - fluxConcentration[ind];
 		exchangeCorr[ind] = 0;
 	}
+}
+
+void BlockFreeSurfaceEulerParticlesFVM::forwardExchange(int ind, BlockFreeSurfaceEulerParticlesFVM* dst, int dloc) {
+	double n = exchangeCorr[ind];
+	if (n == 0) {
+		return;
+	}
+	exchangeCorr[ind] = 0;
+	double* acc = &dst->exchangeCorr[dloc];
+#pragma omp atomic
+	*acc += n;
 }
 
 void BlockFreeSurfaceEulerParticlesFVM::prolongCell(int ind, const Block* src, int sInd) {
@@ -356,6 +372,12 @@ void BlockFreeSurfaceEulerParticlesFVM::liquidGradient(const double* (*field)(Bl
 // dp = grad(p) / 2 with p = rho / 3 (kept for the pressure gradient force 2 * dp * volume)
 void BlockFreeSurfaceEulerParticlesFVM::computeGradP() {
 	liquidGradient([](Block* b) -> const double* { return b->Rho; }, 1.0 / 6, dpX, dpY, dpZ);
+}
+
+void BlockFreeSurfaceEulerParticlesFVM::prepareParticleStep() {
+	computeGradP();
+	interpolateFluidVelocity();
+	computeParticlePressure();
 }
 
 // fluid velocity seen by the particles of the cell: velocity averaged over the liquid cells around
