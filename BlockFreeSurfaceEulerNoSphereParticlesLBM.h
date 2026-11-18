@@ -10,15 +10,15 @@
  * next to the walls it is limited as in problemID 4, the liquid gets c K (v - u). A sphere (r = 1) gives
  * problemID 4.
  *
- * Orientation transport: every population carries the orientation of the cell it comes from (of the cell itself
- * after a bounce-back from a wall or the gas), so after the propagation
- *   A(x) = sum_i g_i(x) A(x - e_i) / sum_i g_i(x).
- * The measure (sum of the populations) A is conserved as the number of particles, A stays a weighted mean
- * (trace 1, positive semidefinite; negative populations are rare and corrected by the projection) and a uniform
- * A is kept exactly. Then A follows the Folgar-Tucker equation in every liquid cell.
+ * Orientation transport: the net flux of particles through each link (population out minus population in) carries
+ * the orientation of the upwind cell (as the flux of c A in problemID 33):
+ *   S A_new = S A + sum_links max(in - out, 0) (A_neighbour - A),   S the sum of the populations after the streaming.
+ * The measure (sum of the populations) A is conserved as the number of particles, A stays a convex combination
+ * (trace 1, positive semidefinite) and a uniform A is kept exactly; A diffuses only by the particle diffusion and
+ * the upwind error. Then A follows the Folgar-Tucker equation in every liquid cell.
  *
- * Refined mesh: the populations exchanged with the other level (exchangeCorr of problemID 4) carry the
- * orientation of the cell they leave, collected in exchangeOrient and added with exchangeCorr.
+ * Refined mesh: the net flux exchanged with the other level (exchangeCorr of problemID 4) carries the orientation
+ * of its upwind cell, collected in exchangeOrient and added with exchangeCorr.
  *
  * Parameters: those of problemID 4 and particleAspectRatio, orientationDiffusion, orientationClosure,
  * init/orientation<tag>.txt (SpheroidOrientation).
@@ -32,7 +32,7 @@
 
 class BlockFreeSurfaceEulerNoSphereParticlesLBM : public BlockFreeSurfaceEulerParticlesLBM, public SpheroidOrientation {
 public:
-	// sum_i g_i A(source of g_i) after the propagation, the neighbours read the old orient until applyExchangeCorr
+	// S A after the propagation (S the sum of the populations), the neighbours read the old orient until applyExchangeCorr
 	double* orientNew;
 	// (sum of the populations) A exchanged with the other level, added to the cell with exchangeCorr
 	double* exchangeOrient;

@@ -86,67 +86,60 @@ void BlockFreeSurfaceEulerNoSphereParticlesLBM::computeNewParticleVelocityField(
 	}
 }
 
-// Streaming of problemID 4, every population carries A of the cell it comes from: orientNew = sum_i g_i A_i
-// (S A with the sum of the populations S). A negative population (sharp fronts) would make A an extrapolation,
-// amplifying the differences of A in the cells with few particles; then A is the mean weighted by the positive
-// populations only (the measure S A is not exactly conserved in these cells). With S <= 0 the cell keeps its A.
+// Streaming of problemID 4 and the transport of the orientation by the net fluxes of the links (as the upwind A of
+// problemID 33): through the link to the neighbour y the cell sends out = gc_p(x) and receives in = gc_opp(y), the net
+// flux carries A of the upwind cell. With the sum of the populations S after the streaming
+//   S A_new = S A + sum_links max(in - out, 0) (A_y - A)       (orientNew holds S A_new)
+// which conserves sum(S A) exactly and is a convex combination while the cell does not send out more than it holds.
+// Assigning every population the A of its source cell instead would mix A of the neighbours in every step (the
+// gross exchange w_i c is much larger than the net flux), A would diffuse ~100 times faster than the particles.
+// Bounce-back (wall, gas): in = out, no transport. If the weight of the cell's own A is negative (negative
+// populations at sharp fronts) the convex weights are renormalised (the measure is then not exactly conserved);
+// with S <= 0 the cell keeps its A.
 void BlockFreeSurfaceEulerNoSphereParticlesLBM::propagateScalarCell(int ind) {
 	if (flagMap[ind] != 1 && flagMap[ind] != 3) {
 		return;
 	}
-	double q[6] = { 0, 0, 0, 0, 0, 0 }, qPos[6] = { 0, 0, 0, 0, 0, 0 };
-	double S = 0, Spos = 0;
-	bool negative = false;
+	double dq[6] = { 0, 0, 0, 0, 0, 0 };
+	double S = 0, M = 0;
 	const double* own = &orient[6 * ind];
 	for (int p = 0; p < nf; p++) {
 		int bl = nbBlock(ind, p);
 		int loc = nbLocal(ind, p);
-		bool open = bl > -1 && bl < nBlockMax && blocks[bl] && !blocks[bl]->boundary[loc];
+		bool open = p > 0 && bl > -1 && bl < nBlockMax && blocks[bl] && !blocks[bl]->boundary[loc];
 		if (open) {
 			int fm = ((BlockFreeSurface*)blocks[bl])->flagMap[loc];
 			open = fm == 1 || fm == 3;
 		}
 		double gp;
-		const double* A;
 		if (open) {
 			BlockFreeSurfaceEulerNoSphereParticlesLBM* nb = (BlockFreeSurfaceEulerNoSphereParticlesLBM*)blocks[bl];
 			gp = nb->gc[nf * loc + opp[p]];
-			A = &nb->orient[6 * loc];
+			double m = gp - gc[nf * ind + p]; // net flux into the cell
+			if (m > 0) {
+				const double* A = &nb->orient[6 * loc];
+				M += m;
+				for (int k = 0; k < 6; k++) {
+					dq[k] += m * (A[k] - own[k]);
+				}
+			}
 		}
 		else {
 			gp = gc[nf * ind + p];
-			A = own;
 		}
 		g[nf * ind + opp[p]] = gp;
 		S += gp;
-		for (int k = 0; k < 6; k++) {
-			q[k] += gp * A[k];
-		}
-		if (gp > 0) {
-			Spos += gp;
-			for (int k = 0; k < 6; k++) {
-				qPos[k] += gp * A[k];
-			}
-		}
-		else if (gp < 0) {
-			negative = true;
-		}
 	}
 	double* out = &orientNew[6 * ind];
-	if (!negative) {
-		for (int k = 0; k < 6; k++) {
-			out[k] = q[k];
-		}
-	}
-	else if (S > 0) {
-		for (int k = 0; k < 6; k++) {
-			out[k] = S * qPos[k] / Spos;
-		}
-	}
-	else {
+	if (S <= 0) {
 		for (int k = 0; k < 6; k++) {
 			out[k] = S * own[k];
 		}
+		return;
+	}
+	double f = S - M >= 0 ? 1.0 : S / M; // weight of the own A is S - f M >= 0
+	for (int k = 0; k < 6; k++) {
+		out[k] = S * own[k] + f * dq[k];
 	}
 }
 

@@ -171,12 +171,14 @@ Populations g_i of problemID 4 for c, drag and Folgar-Tucker of problemID 33 (`S
 (m I + K) v_new = m (v - (v·∇)v) + K u + (m - ρV) g,   K = <M>^-1 μ g(Re)       force on the liquid c K (v - u)
 ```
 
-Transport of A: each population carries A of the cell it streams from (A of the cell itself after a bounce-back):
+Transport of A: the net flux of each link (out = g_i leaving x, in = g_opp arriving from x + e_i) carries A of the
+upwind cell (bounce-back: in = out, nothing):
 
 ```
-A(x, t+1) = Σ_i g_i(x, t+1) A(x - e_i, t) / Σ_i g_i(x, t+1)
+S A(x, t+1) = S A(x, t) + Σ_links max(in - out, 0) (A(x + e_i, t) - A(x, t)),     S = Σ_i g_i(x, t+1)
 ```
 
-so Σ_x (Σ_i g_i) A is conserved like Σ g, A stays a convex combination and a uniform A is kept. If a cell receives a
-negative population, the positive ones only are used as weights (no extrapolation). Refinement: the populations of
-the exchange balance (exchangeCorr) carry A of the cell they leave (exchangeOrient). Then the Folgar-Tucker step.
+so Σ_x S A is conserved like Σ g, A stays a convex combination, a uniform A is kept and A diffuses only with the
+particles (plus the upwind error). Using the gross populations instead (each population carrying A of its source)
+would mix A with the neighbours every step (diffusivity ~1/(6θ), 100 × the particle diffusivity). Refinement: the
+net fluxes of the exchange balance (exchangeCorr) carry A of their upwind cell (exchangeOrient). Then Folgar-Tucker.

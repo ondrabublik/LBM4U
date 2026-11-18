@@ -479,6 +479,43 @@ TEST(euler_nosphere_lbm_orientation_measure_is_conserved) {
 	measureConservation(*mesh, "uniform mesh");
 }
 
+// The orientation moves only with a net flux of particles: at rest with a uniform concentration a step of A stays
+// sharp (an exchange of the gross populations would smear it over ~sqrt(2 t / (6 theta)) cells, 4 cells here),
+// with a uniform flow the step moves with the flow and is smeared only by the upwind error.
+TEST(euler_nosphere_lbm_orientation_needs_particle_flux) {
+	for (double ux : { 0.0, 0.02 }) {
+		CaseSpec s = uniformFlow(ux == 0 ? "nsl_step_rest" : "nsl_step_flow", ux);
+		s.initL = [ux](int, int, int, int) { return array<double, 4>{ 1, ux, 0, 0 }; };
+		s.params["particleDiameter"] = num(0.02);
+		s.concentrationL = [](int, int, int, int) { return 0.01; };
+		s.orientationL = [](int, int i, int, int) { return (i >= 4 && i < 8) ? aligned(0, 0, 1) : aligned(1, 0, 0); };
+		auto mesh = buildMesh(s);
+		const int n = 100;
+		runSteps(*mesh, n);
+		// A_zz along x (y = z = 8), exact: the step 4 <= x < 8 shifted by ux t
+		double err = 0, width = 0;
+		for (int i = 0; i < 16; i++) {
+			int ind;
+			NSL* b = (NSL*)mesh->cellAt(i, 8, 8, ind);
+			double x = i + 0.5 - ux * n;
+			double ex = (x >= 4 && x < 8) ? 1.0 : 0.0;
+			double azz = b->orient[6 * ind + 2];
+			err = max(err, fabs(azz - ex));
+			width += azz * (1 - azz); // cells with mixed A
+		}
+		report(string(ux == 0 ? "rest" : "flow 0.02") + ": sum A_zz (1 - A_zz) along x (mixed cells)", width);
+		if (ux == 0) {
+			report("rest: max |A_zz - step|", err);
+			CHECK(err < 1e-12);
+		}
+		else {
+			// first order upwind: two fronts with sigma = sqrt(u (1 - u) t) = 1.4 cells give about 1.6, the exchange of the
+			// gross populations (sigma ~ 6.5 cells) about 7
+			CHECK(width < 2.5);
+		}
+	}
+}
+
 // dam break: the particles of the cells that become gas go to the liquid together with their orientation
 TEST(euler_nosphere_lbm_free_surface) {
 	CaseSpec s = box("nsl_dam", 42, 2, 1, 2, 0.05);

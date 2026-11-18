@@ -68,9 +68,9 @@ to track, or when the orientation field (alignment by the flow, flow-induced ani
   (largest eigenvalue, 1/3 random ... 1 aligned).
 * Limits: one velocity per cell (no dispersion from different orientations), one shape per run, closure error for
   partly aligned states, Jeffery (creeping flow) rotation, no particle stress in the liquid.
-* problemID 42 = the same with the LBM transport of problemID 4 (`particleDiffusivity` etc. as for 4). Every
-  population carries the orientation of the cell it comes from, so A is mixed with the particles (also by their
-  diffusion); r = 1 gives problemID 4. Choose 33 vs 42 as 3 vs 4: 42 smears the cloud and its orientation more.
+* problemID 42 = the same with the LBM transport of problemID 4 (`particleDiffusivity` etc. as for 4). The net
+  particle flux of each link carries A of the upwind cell (as 33), so A moves and mixes only with the particles
+  (also by their diffusion); r = 1 gives problemID 4. Choose 33 vs 42 as 3 vs 4: 42 smears the cloud and its orientation more.
   The fluid fraction 1 - cV of the LBM model makes the liquid velocity vary through a cloud and the spheroids turn
   slightly in that gradient (absent in 33).
 

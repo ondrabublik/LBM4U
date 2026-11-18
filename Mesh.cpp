@@ -675,12 +675,17 @@ void Mesh::scalarCoalesce(int level) {
 				double* mc = &dest->exchangeCorr[loc];
 #pragma omp atomic
 				*mc -= sum; // received by the coarser level
-				if (spheroids) { // with the orientation of the ghost cell
-					const double* A = &((NSL*)b)->orient[6 * ind];
+				if (spheroids) {
+					// with scalarLost (+ out A_dest) this cancels the transport of the link in the propagation of dest:
+					// - (in - out) A_upwind, in = sum, out = the population of dest towards the ghost
+					const double* Ag = &((NSL*)b)->orient[6 * ind];
+					const double* Ad = &((NSL*)dest)->orient[6 * loc];
+					double m = max(sum - dest->gc[nf * loc + opp[dir]], 0.0);
 					double* mq = &((NSL*)dest)->exchangeOrient[6 * loc];
 					for (int k = 0; k < 6; k++) {
+						double dq = sum * Ad[k] + m * (Ag[k] - Ad[k]);
 #pragma omp atomic
-						mq[k] -= sum * A[k];
+						mq[k] -= dq;
 					}
 				}
 			}
@@ -701,7 +706,7 @@ void Mesh::scalarAccount(int level) {
 				continue;
 			}
 			double d = 0;
-			// spheroids: the populations carry the orientation of the cell they leave (the old one, see NSL::orientNew)
+			// spheroids: the net flux of the link carries the orientation of its upwind cell (the old one, see NSL::orientNew)
 			double dq[6] = { 0, 0, 0, 0, 0, 0 };
 			for (int i = 1; i < nf; i++) {
 				int bl = b->nbBlock(ind, i);
@@ -712,10 +717,10 @@ void Mesh::scalarAccount(int level) {
 				d -= b->gc[nf * ind + i];      // received by the computed cell
 				d += b->g[nf * ind + opp[i]];  // sent by the computed cell
 				if (spheroids) {
-					const double* Ag = &((NSL*)b)->orient[6 * ind];
-					const double* Ac = &((NSL*)blocks[bl])->orient[6 * loc];
+					double in = b->gc[nf * ind + i] - b->g[nf * ind + opp[i]]; // net flux into the computed cell
+					const double* A = in > 0 ? &((NSL*)b)->orient[6 * ind] : &((NSL*)blocks[bl])->orient[6 * loc];
 					for (int k = 0; k < 6; k++) {
-						dq[k] += b->g[nf * ind + opp[i]] * Ac[k] - b->gc[nf * ind + i] * Ag[k];
+						dq[k] -= in * A[k];
 					}
 				}
 			}
