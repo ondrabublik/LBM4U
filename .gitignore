@@ -22,3 +22,4 @@ tests_tmp
 !CMakeLists.txt
 gui/**/bin/
 gui/**/obj/
+!docs/math/matematicky_popis.pdf

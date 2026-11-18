@@ -7,8 +7,20 @@ description: Explain, choose, set up and evaluate particle-laden free-surface fl
 
 Three models share the liquid solver (free surface, refinement, rheology) and differ in how the particles are
 represented. Case files, units and running are in **lbm4u-free-surface** - read it first. The equations of all
-three models are in `references/models.md`; read it when the user asks how a model works or when you need to
+three models are in `references/models.md` and in `docs/math/matematicky_popis.pdf`; read them when the user asks how a model works or when you need to
 reason about accuracy.
+
+This skill compares the models and helps to choose one. Once the model is chosen, use its own skill for the
+parameters, input files, checks and limits:
+
+| problemID | Model | Skill |
+|---|---|---|
+| 2 | Lagrange, spheres | **lbm4u-lagrange-spheres** |
+| 22 | Lagrange, rotating ellipsoids | **lbm4u-lagrange-ellipsoids** |
+| 3 | Euler FVM, spheres | **lbm4u-euler-fvm** |
+| 33 | Euler FVM, spheroids with orientation tensor | **lbm4u-euler-fvm-spheroids** |
+| 4 | Euler LBM, spheres | **lbm4u-euler-lbm** |
+| 42 | Euler LBM, spheroids with orientation tensor | **lbm4u-euler-lbm-spheroids** |
 
 ## Which model
 
