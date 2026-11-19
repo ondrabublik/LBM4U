@@ -37,8 +37,11 @@ public:
 	double* gVOFpX, * gVOFpY, * gVOFpZ;
 	double dParticle, rhoParticle, crossectionParticle, volumeParticle, massParticle;
 	double taus, diffusLB;
+	double tauPlus;                             // TRT relaxation time of the symmetric part
+	double tauFront;                            // extra tau- at steep fronts (frontDiffusivity)
+	static constexpr double TRT_TAU_PLUS = 1.0;
 	double concentrationLimit, interPartFCoef, concentrationSum, concentrationMax;
-	double* tauDir;
+	double* tauDir;                             // tau- of the pairs of directions
 	double tauOverPack;
 	int* positiveDirs;
 	double theta;

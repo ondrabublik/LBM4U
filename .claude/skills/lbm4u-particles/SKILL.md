@@ -28,16 +28,17 @@ parameters, input files, checks and limits:
 |---|---|---|---|
 | Particles are | individual points with own d, ρp | number per cell, one size and density | number per cell, one size and density |
 | Input | `init/particles.txt` | `init/concentration<tag>.txt` | `init/concentration<tag>.txt` |
-| Transport | trajectories, implicit drag | conservative upwind/Lax-Wendroff fluxes, van Leer limiter | scalar LBM populations, BGK with direction-dependent τ |
-| Numerical diffusion | none | small (limiter) | prescribed `particleDiffusivity`, needed for stability |
+| Transport | trajectories, implicit drag | conservative upwind/Lax-Wendroff fluxes, van Leer limiter | scalar LBM populations, TRT (τ⁺ = 1, τ⁻ from D) |
+| Numerical diffusion | none | small (limiter) | prescribed `particleDiffusivity` (can be ~0; small undershoots at sharp fronts) |
 | Packing limit | repulsion between particles (not a contact model) | none | `overpackDiffusivity` above 0.74 packing |
 | Cost | ∝ number of particles | ~2× liquid alone | ~2.5-3× liquid alone |
 | Best for | dilute, polydisperse, trajectories, wall impacts, d ≪ h | dilute to moderate monodisperse suspensions, sharp fronts | when smooth, diffusive transport is acceptable or wanted |
 
 Practical guidance from the tests and the settling-cloud study (21 runs, three models on a half-refined box):
 
-* Lagrange and FVM agree to 2-8 % in cloud velocity; LBM is 18-33 % slower because its diffusivity smears the
-  cloud. Prefer FVM for quantitative monodisperse work; use LBM only with a small `particleDiffusivity`.
+* Lagrange and FVM agree to 2-8 % in cloud velocity. LBM with the TRT transport and a small `particleDiffusivity`
+  (D_lat ≈ 0.001) is 5-10 % slower than FVM (Nitsche & Batchelor benchmark in `simulations/cloud/`); the former BGK
+  transport needed D_lat ≥ 0.005 and was 18-38 % slower. Prefer FVM for quantitative monodisperse work.
 * A Lagrangian particle "feels" part of its own disturbance; this grows as the cell shrinks (fluid velocity at the
   particle 0.26 v_t at d/h = 0.64, 0.06 v_t at d/h = 0.32). Keep d clearly below h (d/h ≲ 0.3) or accept a few %
   of extra settling speed; on a refined mesh this makes particles in the fine region settle slightly faster.
@@ -110,7 +111,8 @@ to track, or when the orientation field (alignment by the flow, flow-induced ani
      per cell, block file order, k fastest). For a volume fraction φ: `c = φ · h_L³ / (π d³/6)` with `h_L` the cell
      size of the block's level. Missing file = no particles in the block.
    * `make_case.py` writes both (`"particles"` and `"concentration"` keys with a sphere, box or expression region).
-3. `particleDiffusivity` for LBM: the smallest stable value is about `0.005 · h · Cu` (cell Péclet ~10); the
+3. `particleDiffusivity` for LBM: recommended `D ≈ 0.001 · h_L² / Δt_L` on the level holding the particles (stable
+   down to 0, lower values give undershoots at sharp fronts; optional `frontDiffusivity`, see lbm4u-euler-lbm); the
    diffusion length `sqrt(2 D T)` should be small compared with the cloud - report it to the user.
 4. Check the run before a long computation: the console shows the particle count (`nP`, `maxP` for problemID 4 and 42,
    statistics for problemID 2). A changing count means particles leave through an inlet/outlet or a setup error.

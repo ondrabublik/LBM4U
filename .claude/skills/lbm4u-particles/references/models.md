@@ -88,20 +88,24 @@ computed once and applied with opposite signs to both cells (exactly conservativ
 The concentration is carried by a second set of populations g_i on the same lattice:
 
 ```
-g_i(x + e_i, t + 1) = g_i − (g_i − g_i^eq) / τ_i
+g_i^± = (g_i ± g_ī) / 2                                                  (ī = opposite direction)
+g_i(x + e_i, t + 1) = g_i − (g_i^+ − g_i^{eq+}) / τ⁺ − (g_i^- − g_i^{eq-}) / τ⁻_i,   τ⁺ = 1
 g_i^eq = w_i c (1 + 3 θ e_i·v),  g_0^eq = θ c − Σ_{i≠0} g_i^eq          (θ ≈ 1/1.4, limited for D3Q15)
 ```
 
-which reproduces `∂c/∂t + ∇·(c v) = ∇·(D ∇c)` with `D = (τ − ½) / (3θ)` in lattice units; τ is set from
-`particleDiffusivity`. The relaxation time is per direction pair:
-`τ_i = τ_s + |c_{+} − 2c + c_{−}| / 1000 + max(c/c_max − 1, 0) · overpackDiffusivity`, where `c_max` is the 0.74
-packing; the second term is an artificial diffusion at steep fronts, the third spreads overpacked regions. Because τ
-differs between directions, c is reconstructed so that the collision conserves Σg exactly
-(`c = Σ (g_i/τ_i) / Σ (w_i'/τ_i)`).
+(two-relaxation-time, TRT), which reproduces `∂c/∂t + ∇·(c v) = ∇·(D ∇c)` with `D = (τ⁻ − ½) / (3θ)` in lattice
+units. τ⁻ is per direction pair:
+`τ⁻_i = τ_s + 3θ D_front · |c₊ − 2c + c₋| / (|c₊| + 2|c| + |c₋|) + max(c/c_max − 1, 0) · overpackDiffusivity`, with
+τ_s from `particleDiffusivity`, D_front from `frontDiffusivity` (both converted to lattice units of the level) and
+`c_max` the 0.74 packing; the front indicator is dimensionless (0 in linear profiles, 1/3 at the edge of a step). The
+symmetric part is reset to the equilibrium every step (τ⁺ = 1), which removes the oscillations of BGK at τ → ½ and
+does not keep the symmetric non-equilibrium that bounce-back creates at walls (it would slow the transport along
+walls for a large τ⁺). The antisymmetric parts sum to zero, so the collision conserves Σg and `c = Σg / θ`.
 
 The particle velocity v solves the single-particle equation of motion with an explicit convective term
 `(v·∇)v`; next to walls only the velocity towards the wall is limited to the liquid velocity. Force on the liquid as
-in FVM. D below ~`0.005 h Cu` tends to be unstable; larger D smears the solution (diffusion length `sqrt(2 D T)`).
+in FVM. The scheme is stable down to D = 0; below D_lat ≈ 0.001 sharp fronts get undershoots (c < 0) and overshoots,
+larger D smears the solution (diffusion length `sqrt(2 D T)`).
 
 ## 6. Refinement and free surface
 

@@ -17,13 +17,13 @@ exchange in `Mesh.cpp` (`scalarCoalesce`, `scalarAccount`, step 44). Equations:
 
 * As problemID 33 when the particle transport should be diffusive (dispersion, mixing) or packing-limited, or when the
   LBM transport is preferred for simplicity.
-* Choose 33 vs 42 like 3 vs 4: 42 smears clouds and fronts (minimum diffusivity) and their orientation with them;
+* Choose 33 vs 42 like 3 vs 4: 42 smears clouds and fronts somewhat more (`particleDiffusivity`) and their orientation with them;
   in advection-dominated flows (mould filling) both give nearly the same orientation field.
 
 ## Parameters
 
 `problemID 42`, the parameters of problemID 4 (`particleDiameter` volume-equivalent, `particleDensity`,
-`particleDiffusivity` ≳ `0.005 · h · Cu`, `overpackDiffusivity`) and of problemID 33 (`particleAspectRatio`,
+`particleDiffusivity` (recommended `0.001 · h_L² / Δt_L`), `frontDiffusivity`, `overpackDiffusivity`) and of problemID 33 (`particleAspectRatio`,
 `orientationDiffusion`, `orientationClosure`). Concentration and orientation files as for 33. `gravityRotationOmega`
 works as in problemID 4.
 
@@ -51,7 +51,7 @@ so the liquid velocity varies through a cloud and the spheroids turn slightly in
 
 ## Accuracy and checks
 
-* Equidistant-mesh study (local only): sphere cloud 5.29 mm/s vs FVM 6.68 mm/s and Lagrange 7.17 mm/s (smearing,
+* Equidistant-mesh study (local only, BGK transport before the TRT change, D_lat = 0.005): sphere cloud 5.29 mm/s vs FVM 6.68 mm/s and Lagrange 7.17 mm/s (smearing,
   σ_z 0.34 vs 0.20 cm); mesh h/2 +16 %. Shape effect on the cloud velocity agrees with the other models within 1-2
   percentage points. Orientation at the end of the cloud fall: ⟨p_z²⟩ 0.53 (r = 3) vs 0.50 FVM, 0.42 Lagrange.
 * Mould filling: same orientation structure as 33 and 22; slightly lower extremes than 33 (⟨p_x²⟩ behind the gate
@@ -61,7 +61,7 @@ so the liquid velocity varies through a cloud and the spheroids turn slightly in
 
 ## Limits
 
-Those of problemID 4 (minimum diffusivity, one size per run) and of problemID 33 (closure error for partly aligned
+Those of problemID 4 (smearing by D, small undershoots at sharp fronts, one size per run) and of problemID 33 (closure error for partly aligned
 states, Jeffery rotation, no particle stress in the liquid); first-order upwind smearing of A at orientation fronts;
 inlets do not bring particles in.
 

@@ -74,9 +74,17 @@ BlockFreeSurfaceEulerParticlesLBM::BlockFreeSurfaceEulerParticlesLBM(bool isFirs
 	// "speed of sound" of the scalar is 1 / (3 theta) and the diffusivity is (taus - 1/2) / (3 theta).
 	// The rest population c * (theta - 1 + w0) has to stay positive (theta = 1 / 1.4 is too small for D3Q15).
 	theta = max(1.0 / 1.4, 1.0 - w[0] + (1.0 / 1.4 - 2.0 / 3.0));
+	// TRT: the antisymmetric part (the flux of the particles) relaxes with tau- = 1/2 + 3 theta D, the symmetric
+	// part with tau+ = 1, i.e. it is reset to the equilibrium in every step. BGK (tau+ = tau-) over-relaxes the
+	// symmetric part for small D (oscillations, a minimum diffusivity ~0.005 was needed); a large tau+ (fixed
+	// "magic" Lambda) keeps the symmetric non-equilibrium created by the bounce-back at walls and slows down
+	// the transport along walls. tau+ = 1 is stable down to D = 0 (the limit is set by the undershoots).
 	taus = 1.0 / 2 + 3 * theta * diffusLB;
+	tauPlus = TRT_TAU_PLUS;
 	double diffusLBoverPack = getParDouble("overpackDiffusivity", par, false, 0);
 	tauOverPack = 3 * diffusLBoverPack;
+	// extra diffusivity at steep fronts [m2/s], scaled by a dimensionless indicator of the front (0 ... 1)
+	tauFront = 3 * theta * getParDouble("frontDiffusivity", par, false, 0) / Cvis;
 
 	positiveDirs = new int[(nf - 1) / 2];
 	vector<int> aux(nf, 0);
@@ -102,11 +110,8 @@ BlockFreeSurfaceEulerParticlesLBM::BlockFreeSurfaceEulerParticlesLBM(bool isFirs
 	concentrationMax = 0;
 
 	if (isFirst) {
-		cout << "taus = " << taus << endl;
+		cout << "particle transport: TRT, tau- = " << taus << ", tau+ = " << tauPlus << " (level " << level << ")" << endl;
 		cout << "maximal allowed value of concetration = " << concentrationLimit << endl;
-		if (taus < 0.505) {
-			cout << "warning: taus is close to 0.5, the transport of the particles may oscillate (increase particleDiffusivity)" << endl;
-		}
 	}
 }
 
@@ -345,8 +350,8 @@ void BlockFreeSurfaceEulerParticlesLBM::collectReleased() {
 	}
 }
 
-// The concentration is defined so that the collision with the relaxation times of the directions
-// conserves the sum of the populations: sum((g - geq(c)) / tau) = 0.
+// The TRT collision conserves the sum of the populations for any relaxation times of the pairs (the
+// antisymmetric parts sum to zero, the symmetric part has one tau+), so c = sum(g) / theta.
 void BlockFreeSurfaceEulerParticlesLBM::calculConcentration() {
 	concentrationSum = 0.0;
 	concentrationMax = 0.0;
@@ -355,31 +360,38 @@ void BlockFreeSurfaceEulerParticlesLBM::calculConcentration() {
 		concentration[ind] = 0.0;
 		user_def[ind] = 0;
 		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
-			const double* td = &tauDir[nf * ind];
-			// sum(geq / tau) / c, the velocity terms cancel because opposite directions share tau
-			double auxsum = (theta - 1.0 + w[0]) / td[0];
-			double sum = g[nf * ind] / td[0];
-			for (int p = 1; p < nf; p++) {
-				auxsum += w[p] / td[p];
-				sum += g[nf * ind + p] / td[p];
-				user_def[ind] = max(user_def[ind], td[p]);
+			double sum = 0;
+			for (int p = 0; p < nf; p++) {
+				sum += g[nf * ind + p];
+				user_def[ind] = max(user_def[ind], tauDir[nf * ind + p]);
 			}
-			concentration[ind] = sum / auxsum;
+			concentration[ind] = sum / theta;
 			concentrationSum += concentration[ind];
 			concentrationMax = max(concentrationMax, concentration[ind]);
 		}
 	}
 }
 
+// two-relaxation-time collision: g+- = (g_p +- g_opp) / 2, the symmetric part relaxes with tau+,
+// the antisymmetric part (the flux of the particles) with tau- of the pair (diffusion D = (tau- - 1/2) / (3 theta))
 void BlockFreeSurfaceEulerParticlesLBM::collisionScalar() {
 	double geq[27];
+	int nPos = (nf - 1) / 2;
+	double wPlus = 1.0 / tauPlus;
 	for (int i = 0; i < nAll; i++) {
 		int ind = indAll[i];
 		if (flagMap[ind] == 1 || flagMap[ind] == 3) {
 			equilibriumScalar(geq, concentration[ind], UP[ind], VP[ind], WP[ind]);
-			for (int p = 0; p < nf; p++) {
-				int pind = nf * ind + p;
-				gc[pind] = g[pind] - 1.0 / tauDir[nf * ind + p] * (g[pind] - geq[p]);
+			const double* gi = &g[nf * ind];
+			double* go = &gc[nf * ind];
+			go[0] = gi[0] - wPlus * (gi[0] - geq[0]);
+			for (int q = 0; q < nPos; q++) {
+				int p = positiveDirs[q], o = opp[p];
+				double sym = 0.5 * (gi[p] + gi[o] - geq[p] - geq[o]);
+				double anti = 0.5 * (gi[p] - gi[o] - geq[p] + geq[o]);
+				double wMinus = 1.0 / tauDir[nf * ind + p];
+				go[p] = gi[p] - wPlus * sym - wMinus * anti;
+				go[o] = gi[o] - wPlus * sym + wMinus * anti;
 			}
 		}
 	}
@@ -628,8 +640,16 @@ void BlockFreeSurfaceEulerParticlesLBM::setTau() {
 	}
 }
 
+// tau- of a pair of directions: the diffusivity of the particles, the front term (dimensionless second difference,
+// 0 in linear profiles, 1/3 at the edge of a step, 1 at an isolated peak) and the overpacking term
 double BlockFreeSurfaceEulerParticlesLBM::computeTau(double cf, double cm, double cb) {
-	double d2 = cf - 2 * cm + cb;
+	double tau = taus;
+	if (tauFront > 0) {
+		double scale = fabs(cf) + 2 * fabs(cm) + fabs(cb);
+		if (scale > 0) {
+			tau += tauFront * fabs(cf - 2 * cm + cb) / scale;
+		}
+	}
 	double overpack = max((cm - concentrationLimit) / concentrationLimit, 0.0);
-	return taus + abs(d2) / 1000 + overpack * tauOverPack;
+	return tau + overpack * tauOverPack;
 }

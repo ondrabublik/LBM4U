@@ -68,7 +68,8 @@ with *. Source of truth: `getPar*` calls in `Block.cpp`, `Mesh.cpp`, `BlockFreeS
 | `particleAspectRatio` | 1 | 33, 42 | r = a / b of the spheroids (> 1 prolate, < 1 oblate) |
 | `orientationDiffusion` | 0 | 33, 42 | Folgar-Tucker rotary diffusion C_I (fibre suspensions ~0.001-0.01) |
 | `orientationClosure` | 0 | 33, 42 | 0 hybrid, 1 quadratic closure of the orientation equation |
-| `particleDiffusivity`* | | 4, 42 | diffusivity of the concentration [m²/s] |
+| `particleDiffusivity`* | | 4, 42 | diffusivity of the concentration [m²/s] (TRT τ⁻; recommended 0.001 h_L²/Δt_L, 0 allowed) |
+| `frontDiffusivity` | 0 | 4, 42 | extra diffusivity at steep fronts [m²/s] × dimensionless front indicator (0-1) |
 | `overpackDiffusivity` | 0 | 4, 42 | extra diffusion above the packing limit (lattice units) |
 | `particleInterForces` | 0 | 4, 42 | read, not used |
 

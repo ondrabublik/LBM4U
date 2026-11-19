@@ -129,6 +129,8 @@ Fixed (value before → after in the tests):
 | LBM | D3Q15 lost all particles (rest weight `1/3` hard coded, negative rest population for θ = 1/1.4) | `w[0]`, θ limited from below; D3Q19, D3Q15 and D2Q9 conserve to 1e-9 |
 | LBM | the fluid velocity seen by the particles was zero in the interface cells | defined in all liquid cells |
 | LBM | particles in the cells next to a wall moved with the fluid, so they did not settle along vertical walls (55 % of the settling distance in a column 8 cells wide) | only the velocity towards the wall is limited, 99 % of the analytic distance |
+| LBM | BGK collision of the scalar with τ → ½ oscillated, `particleDiffusivity` had to be ≥ 0.005 in lattice units; a settling cloud (Nitsche & Batchelor) fell 38 % slower than with FVM because of the smearing | TRT collision (τ⁺ = 1, τ⁻ from D), stable down to D = 0; cloud 10 % (D_lat = 0.001) or 5 % (smaller D + `frontDiffusivity`) slower than FVM |
+| LBM | artificial diffusion at fronts `|c₊ − 2c + c₋| / 1000` depended on the units of the concentration (number per cell: +573 to τ for a 10 µm powder at φ = 0.3 in 1 mm cells) | dimensionless indicator `|c₊ − 2c + c₋| / (|c₊| + 2|c| + |c₋|)` × the new parameter `frontDiffusivity` [m²/s], default 0 |
 
 Results of the settling tests (sphere, Schiller–Naumann terminal velocity): slip velocity of the Lagrangian particle +0.02 %, settling distance of the concentration −1.0 % (FVM) and −1.0 % (LBM).
 
@@ -136,7 +138,7 @@ Known properties and limits:
 
 * Lagrange: the particle is a point with a drag law. Its own reaction force drags the fluid along (a particle of 0.8 cell settled 19 % faster than the terminal velocity in the test), so the particles should be clearly smaller than a cell.
 * Lagrange: the repulsive force between particles `10 / Ca · sqrt(1.5 d − L)` does not depend on the mass of the particles, it is not a contact model; in a periodic box particles do not interact across the boundary. Inlets and outlets are walls for the particles.
-* Euler: the concentration is the number of particles per cell, also in the interface cells (it is not related to the fill level). FVM has no packing limit (`PP = 0`), LBM limits it with `overpackDiffusivity` (dimensionless, in lattice units) and adds an artificial diffusion `|c'' |/1000` that depends on the units of the concentration.
+* Euler: the concentration is the number of particles per cell, also in the interface cells (it is not related to the fill level). FVM has no packing limit (`PP = 0`), LBM limits it with `overpackDiffusivity` (dimensionless, in lattice units). LBM (TRT) has small undershoots (c < 0) at sharp fronts for D_lat below ~0.001; `frontDiffusivity` adds diffusion only at steep fronts.
 * Euler LBM: `G·epsF` together with the reaction of the drag counts the buoyancy of the particles twice for a large volume fraction; `particleInterForces` and the fields `dp`, `dc`, `gVOFp` are computed or read but not used.
 * The force of the particles enters the fluid as `F·vof/ρ` (interface cells get less).
 * Lagrangian fibers (`problemID` 21) and the files `LagrangeParticlesVar2/3` (not built) were not reviewed.
